@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Patente C – Quiz vocal</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0f6f78">
+<link rel="icon" href="icon-192.png">
+<style>
+:root{--bg:#eef2f7;--ink:#1b2a41;--mut:#5b6b80;--ac:#0f6f78;--ok:#1e7a3c;--ko:#b3261e;--wa:#8a5a00;--card:#fff}
+@media(prefers-color-scheme:dark){:root{--bg:#121a26;--ink:#e8eef6;--mut:#9fb0c4;--ac:#4fc3cc;--ok:#6fd08c;--ko:#ff8a80;--wa:#ffcc66;--card:#1c2736}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:18px/1.5 system-ui,-apple-system,sans-serif;min-height:100vh;padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom))}
+main{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+h1{font-size:1.25rem;margin:0}
+.sub{color:var(--mut);font-size:.9rem;margin:2px 0 0}
+#mic{align-self:center;width:132px;height:132px;border-radius:50%;border:0;background:var(--ac);color:#fff;font:600 1rem system-ui;cursor:pointer}
+#mic.on{outline:6px solid color-mix(in srgb,var(--ac) 35%,transparent)}
+#mic:focus-visible,button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
+form{display:flex;gap:8px}
+textarea,input,select{min-width:0;padding:12px;border-radius:10px;border:1px solid var(--mut);background:var(--card);color:var(--ink);font:inherit}
+textarea{flex:1;resize:vertical}
+form button{padding:0 16px;border-radius:10px;border:0;background:var(--ink);color:var(--bg);font:inherit;cursor:pointer}
+.card{background:var(--card);border-radius:14px;padding:16px}
+.heard{color:var(--mut);font-size:.9rem}
+.verdict{font-size:1.6rem;font-weight:700;margin:6px 0}
+.ok{color:var(--ok)}.ko{color:var(--ko)}.wa{color:var(--wa)}
+ul{list-style:none;padding:0;margin:8px 0}
+li{padding:6px 10px;border-radius:8px}
+li.good{background:color-mix(in srgb,var(--ok) 18%,transparent);font-weight:600}
+blockquote{margin:10px 0;padding:8px 12px;border-inline-start:4px solid var(--ac);background:color-mix(in srgb,var(--ac) 8%,transparent);border-radius:6px}
+a{color:var(--ac)}
+.btn{display:inline-block;padding:8px 12px;border-radius:10px;border:1px solid var(--mut);cursor:pointer;color:var(--ink);background:none;font:inherit;font-size:.9rem}
+details{background:var(--card);border-radius:14px;padding:12px 16px}
+summary{cursor:pointer;font-weight:600}
+.row{display:flex;flex-direction:column;gap:8px;margin:10px 0}
+.row label{font-size:.85rem;color:var(--mut)}
+[hidden]{display:none}
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1 id="titre">Patente C</h1>
+    <p class="sub" id="etat">Chargement…</p>
+  </div>
+
+  <button id="mic" type="button">Poser une question</button>
+  <form id="f">
+    <textarea id="txt" rows="2" placeholder="ou écris ta question (QCM : … A … B … C …)" aria-label="Question"></textarea>
+    <button>Demander</button>
+  </form>
+  <p class="sub">Vrai/faux : dis ton affirmation. QCM : dis la question puis « A … B … C … ».</p>
+  <p class="sub" id="note" hidden>La reconnaissance vocale n'est pas disponible sur ce navigateur. Utilise Chrome (Android) ou écris ta question.</p>
+
+  <section class="card" id="res" hidden aria-live="polite"></section>
+
+  <details id="reg">
+    <summary>Réglages</summary>
+    <div class="row">
+      <label for="lang">Langue de la voix et des réponses</label>
+      <select id="lang">
+        <option value="fr">Français</option>
+        <option value="it">Italiano</option>
+        <option value="en">English</option>
+        <option value="ar">العربية</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="repo">Base de connaissances (dépôt privé) : propriétaire/nom</label>
+      <input id="repo" placeholder="MaxMcNeil/Patente-C-base" autocapitalize="off" autocomplete="off">
+      <label for="branch">Branche</label>
+      <input id="branch" value="main" autocapitalize="off" autocomplete="off">
+      <label for="token">Jeton GitHub en lecture seule (reste sur ce téléphone)</label>
+      <input id="token" type="password" autocomplete="off">
+      <div><button type="button" id="sync" class="btn">Enregistrer et synchroniser</button></div>
+      <p class="sub" id="syncmsg"></p>
+    </div>
+    <div class="row">
+      <label>Fichiers locaux (restent sur ce téléphone)</label>
+      <div>
+        <label class="btn">Charger mes fichiers<input type="file" id="files" multiple accept=".json,.md,.txt" hidden></label>
+        <button type="button" id="clr" class="btn">Effacer</button>
+      </div>
+    </div>
+  </details>
+</main>
+<script src="engine.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const LOC={fr:"fr-FR",it:"it-IT",en:"en-US",ar:"ar-SA"};
+const L="ABCDEFGH";
+const T={
+ fr:{yes:"Oui",no:"Non",unsure:"Je ne peux pas trancher avec certitude",ans:"Réponse",close:"Passages les plus proches",
+     empty:"La base est vide. Synchronise-la dans Réglages ou charge des fichiers.",num:"La source indique : ",
+     neg:"La négation diffère de la source : vérifie.",conf:"confiance",auto:"transcription automatique",video:"Voir la vidéo",
+     nores:"Rien d'assez proche dans la base."},
+ it:{yes:"Vero",no:"Falso",unsure:"Non posso stabilirlo con certezza",ans:"Risposta",close:"Passaggi più vicini",
+     empty:"La base è vuota. Sincronizzala in Impostazioni o carica dei file.",num:"La fonte indica: ",
+     neg:"La negazione è diversa dalla fonte: controlla.",conf:"affidabilità",auto:"trascrizione automatica",video:"Guarda il video",
+     nores:"Niente di abbastanza vicino nella base."},
+ en:{yes:"True",no:"False",unsure:"I can't say for sure",ans:"Answer",close:"Closest passages",
+     empty:"The base is empty. Sync it in Settings or load files.",num:"The source says: ",
+     neg:"The negation differs from the source: check it.",conf:"confidence",auto:"automatic transcript",video:"Watch the video",
+     nores:"Nothing close enough in the base."},
+ ar:{yes:"صحيح",no:"خطأ",unsure:"لا أستطيع الحسم بيقين",ans:"الجواب",close:"أقرب المقاطع",
+     empty:"القاعدة فارغة. زامنها من الإعدادات أو حمّل ملفات.",num:"المصدر يذكر: ",
+     neg:"النفي يختلف عن المصدر: تحقق.",conf:"الثقة",auto:"تفريغ آلي",video:"شاهد الفيديو",
+     nores:"لا شيء قريب بما يكفي في القاعدة."}
+};
+const CONF={fr:{haute:"haute",moyenne:"moyenne"},it:{haute:"alta",moyenne:"media"},en:{haute:"high",moyenne:"medium"},ar:{haute:"عالية",moyenne:"متوسطة"}};
+
+let Q=[],BASE=[],MINE={questions:[],cours:[]},KB={sources:{},chunks:[]},IDX=null;
+const lang=()=>$("lang").value;
+const tr=()=>T[lang()];
+
+/* ---------- réglages ---------- */
+const cfg=()=>{try{return JSON.parse(localStorage.getItem("qv_cfg"))||{}}catch(e){return{}}};
+const setCfg=c=>{try{localStorage.setItem("qv_cfg",JSON.stringify(c))}catch(e){}};
+
+/* ---------- stockage local (IndexedDB) ---------- */
+const DB=()=>new Promise((res,rej)=>{const r=indexedDB.open("quizvocal",1);r.onupgradeneeded=()=>r.result.createObjectStore("d");r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
+const dget=async k=>{try{const db=await DB();return await new Promise(res=>{const q=db.transaction("d").objectStore("d").get(k);q.onsuccess=()=>res(q.result);q.onerror=()=>res(undefined)})}catch(e){return undefined}};
+const dset=async(k,v)=>{try{const db=await DB();return await new Promise(res=>{const t=db.transaction("d","readwrite");t.objectStore("d").put(v,k);t.oncomplete=()=>res();t.onerror=()=>res()})}catch(e){}};
+
+function say(t){
+  if(!window.speechSynthesis||!t)return;
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(t);u.lang=LOC[lang()];speechSynthesis.speak(u);
+}
+
+/* ---------- questions de quiz.json : correspondance stricte ---------- */
+function best(heard){
+  const ut=[...new Set(Engine.toks(heard))];
+  if(!ut.length)return null;
+  let top=null,sc=0;
+  for(const q of Q){
+    const qt=new Set(Engine.toks([q.question,...(q.choix||[]),...(q.mots_cles||[])].join(" ")));
+    const hits=ut.filter(w=>qt.has(w)).length;
+    const s=0.6*hits/ut.length+0.4*hits/Math.max(1,qt.size);
+    if(s>sc){sc=s;top=q}
+  }
+  return sc>=0.55?top:null;
+}
+
+function refresh(){
+  Q=[...BASE,...MINE.questions];
+  const chunks=[...(KB.chunks||[])],sources={...(KB.sources||{})};
+  MINE.cours.forEach((p,i)=>{const id="local:"+p.titre;chunks.push({id:"l#"+i,s:id,t:p.texte});sources[id]={title:p.titre,type:"local",origin:"",statut:"non vérifié"}});
+  IDX=Engine.buildIndex(chunks,sources);
+  const ns=Object.keys(sources).length;
+  $("etat").textContent=Q.length+" questions · "+chunks.length+" passages · "+ns+" sources"+(KB.updated?" · base du "+KB.updated.slice(0,10):"");
+}
+
+/* ---------- affichage ---------- */
+function srcLine(p){
+  const t=tr(),bits=[];
+  if(p.title)bits.push(esc(p.title));
+  if(p.loc)bits.push(esc(p.loc));
+  bits.push(esc(p.statut));
+  if(p.auto)bits.push(esc(t.auto));
+  let s=bits.join(" · ");
+  if(/^https?:\/\//.test(p.origin))s+=` · <a href="${esc(p.origin)}" target="_blank" rel="noopener">lien</a>`;
+  return `<p class="sub">${s}</p>`;
+}
+
+function showQuiz(heard,q){
+  const t=tr(),res=$("res");
+  let verdict,spoken,body="",bad=false;
+  if(q.type==="qcm"){
+    const i=q.reponse;
+    verdict=t.ans+" "+L[i];
+    spoken=verdict+" : "+q.choix[i]+".";
+    body="<ul>"+q.choix.map((c,k)=>`<li class="${k===i?"good":""}">${L[k]}. ${esc(c)}</li>`).join("")+"</ul>";
+  }else{
+    const yes=["oui","vero","si","sì","v","true"].includes(String(q.reponse).toLowerCase());
+    bad=!yes;verdict=yes?t.yes:t.no;spoken=verdict+".";
+  }
+  if(q.explication)spoken+=" "+q.explication;
+  res.innerHTML=`<div class="heard">« ${esc(heard)} »</div><p class="sub">${esc(q.question)}</p>
+    <div class="verdict ${bad?"ko":"ok"}">${esc(verdict)}</div>${body}
+    ${q.explication?`<p>${esc(q.explication)}</p>`:""}
+    ${q.video?`<p><a href="${esc(q.video)}" target="_blank" rel="noopener">${esc(t.video)}</a></p>`:""}`;
+  say(spoken);
+}
+
+function showKb(heard,a){
+  const t=tr(),res=$("res");
+  let verdict,cls,spoken,extra="",body="";
+  if(a.verdict==="unsure"){
+    verdict=t.unsure;cls="wa";spoken=verdict+".";
+    body=a.alts&&a.alts.length
+      ?`<p class="sub">${esc(t.close)}</p>`+a.alts.map(p=>`<blockquote>${esc(p.text)}</blockquote>${srcLine(p)}`).join("")
+      :`<p>${esc(t.nores)}</p>`;
+  }else{
+    if(a.kind==="mcq"){
+      verdict=t.ans+" "+L[a.verdict];cls="ok";spoken=verdict+" : "+a.options[a.verdict]+".";
+      body="<ul>"+a.options.map((c,k)=>`<li class="${k===a.verdict?"good":""}">${L[k]}. ${esc(c)}</li>`).join("")+"</ul>";
+    }else{
+      const yes=a.verdict==="yes";
+      verdict=yes?t.yes:t.no;cls=yes?"ok":"ko";spoken=verdict+".";
+      if(a.reason==="number")extra=`<p>${esc(t.num)}${esc(a.sourceNums.join(", "))}</p>`;
+      if(a.reason==="negation")extra=`<p>${esc(t.neg)}</p>`;
+    }
+    body+=extra+`<blockquote>${esc(a.passage.text)}</blockquote>`+srcLine(a.passage)+
+      `<p class="sub">${esc(t.conf)} : ${esc(CONF[lang()][a.conf]||a.conf)}</p>`;
+    spoken+=" "+a.passage.text.slice(0,300);
+  }
+  res.innerHTML=`<div class="heard">« ${esc(heard)} »</div><div class="verdict ${cls}">${esc(verdict)}</div>${body}`;
+  say(spoken);
+}
+
+function ask(heard){
+  heard=heard.trim();
+  if(!heard)return;
+  const res=$("res");res.hidden=false;
+  const q=best(heard);
+  if(q)return showQuiz(heard,q);
+  if(!IDX||!IDX.N){res.innerHTML=`<div class="heard">« ${esc(heard)} »</div><p>${esc(tr().empty)}</p>`;say(tr().empty);return}
+  showKb(heard,Engine.answer(IDX,heard));
+}
+
+/* ---------- voix ---------- */
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+$("mic").onclick=()=>{
+  if(!SR){$("note").hidden=false;return}
+  const r=new SR();r.lang=LOC[lang()];r.interimResults=false;
+  r.onstart=()=>$("mic").classList.add("on");
+  r.onend=()=>$("mic").classList.remove("on");
+  r.onresult=e=>{const s=e.results[0][0].transcript;$("txt").value=s;ask(s)};
+  r.onerror=e=>{$("etat").textContent="Micro : "+e.error};
+  r.start();
+};
+$("f").onsubmit=e=>{e.preventDefault();ask($("txt").value)};
+$("txt").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ask($("txt").value)}});
+
+/* ---------- langue ---------- */
+$("lang").onchange=()=>{const c=cfg();c.lang=lang();setCfg(c)};
+
+/* ---------- synchronisation de la base privée ---------- */
+$("sync").onclick=async()=>{
+  const c=cfg();
+  c.repo=$("repo").value.trim();c.branch=$("branch").value.trim()||"main";c.token=$("token").value.trim();
+  setCfg(c);
+  const m=$("syncmsg");
+  if(!/^[\w.-]+\/[\w.-]+$/.test(c.repo)||!c.token){m.textContent="Renseigne le dépôt (propriétaire/nom) et le jeton.";return}
+  m.textContent="Synchronisation…";
+  try{
+    const r=await fetch(`https://api.github.com/repos/${c.repo}/contents/kb/index.json?ref=${encodeURIComponent(c.branch)}`,
+      {headers:{Authorization:"Bearer "+c.token,Accept:"application/vnd.github.raw+json"}});
+    if(!r.ok)throw new Error(r.status===404?"dépôt, branche ou fichier kb/index.json introuvable (ou jeton sans accès)":r.status===401?"jeton refusé":"erreur "+r.status);
+    const d=await r.json();
+    if(!d||!Array.isArray(d.chunks))throw new Error("fichier de base invalide");
+    KB=d;await dset("kb",KB);refresh();
+    m.textContent="Base synchronisée : "+d.chunks.length+" passages.";
+  }catch(e){m.textContent="Échec : "+e.message}
+};
+
+/* ---------- fichiers locaux ---------- */
+$("files").onchange=async e=>{
+  for(const f of e.target.files){
+    const t=await f.text();
+    if(f.name.endsWith(".json")){
+      try{const d=JSON.parse(t);MINE.questions.push(...(d.questions||[]))}
+      catch(x){$("etat").textContent="JSON invalide : "+f.name;return}
+    }else{
+      const titre=f.name.replace(/\.\w+$/,"");
+      t.split(/\n\s*\n/).map(x=>x.trim()).filter(x=>x.length>40).forEach(x=>MINE.cours.push({titre,texte:x}));
+    }
+  }
+  await dset("mine",MINE);refresh();
+};
+$("clr").onclick=async()=>{MINE={questions:[],cours:[]};await dset("mine",MINE);refresh()};
+
+/* ---------- démarrage ---------- */
+(async()=>{
+  const c=cfg();
+  $("repo").value=c.repo||"";$("branch").value=c.branch||"main";$("token").value=c.token||"";
+  let defLang="fr";
+  try{const r=await fetch("quiz/quiz.json");const d=await r.json();BASE=d.questions||[];$("titre").textContent=d.titre||"Patente C";if(d.langue)defLang=d.langue.slice(0,2)}catch(e){}
+  $("lang").value=LOC[c.lang]?c.lang:(LOC[defLang]?defLang:"fr");
+  const m=await dget("mine");if(m)MINE=m;
+  const k=await dget("kb");if(k&&Array.isArray(k.chunks))KB=k;
+  refresh();
+})();
+if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
+</script>
+</body>
+</html>

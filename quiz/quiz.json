@@ -1,0 +1,28 @@
+{
+  "titre": "Patente C - quiz di ripasso",
+  "langue": "it-IT",
+  "questions": [
+    {
+      "type": "vf",
+      "question": "Il tachigrafo serve a registrare i tempi di guida e di riposo del conducente.",
+      "reponse": "vero",
+      "explication": "Il tachigrafo registra i tempi di guida e di riposo.",
+      "mots_cles": ["tachigrafo", "riposo", "guida"]
+    },
+    {
+      "type": "vf",
+      "question": "Con la patente C si possono trasportare più di otto passeggeri oltre al conducente.",
+      "reponse": "falso",
+      "explication": "Il trasporto di persone rientra nelle categorie D.",
+      "mots_cles": ["passeggeri", "trasporto persone"]
+    },
+    {
+      "type": "qcm",
+      "question": "Quanti quiz ha l'esame di teoria per la patente C?",
+      "choix": ["20", "30", "40", "50"],
+      "reponse": 2,
+      "explication": "Sono 40 quiz vero o falso, con massimo 4 errori.",
+      "mots_cles": ["esame", "teoria", "numero quiz"]
+    }
+  ]
+}
