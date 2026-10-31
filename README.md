@@ -39,6 +39,19 @@ Le sens ne décide jamais seul : il sert à **retrouver le bon passage** et à l
 et sans rapport, vérifie que le modèle les sépare, et propose le **seuil** à utiliser. Si le test dit « séparation insuffisante », laisse l'option désactivée.
 Limite connue : les modèles de sens confondent parfois des contraires (« augmente » / « diminue ») ; relis toujours le passage cité.
 
+## IA gratuite pour comprendre tes questions (facultatif)
+Tu poses ta question à ta manière ; une IA gratuite la **reformule** avec les mots du cours, et l'appli cherche et vérifie la réponse dans TES sources.
+- **Ce qui part sur Internet : uniquement ta phrase**, vers le fournisseur choisi (Google AI Studio ou Groq). Jamais ta base, jamais un passage de cours.
+- **L'IA ne répond jamais.** Une reformulation est refusée si elle change un chiffre, une unité ou une négation. Les reformulations acceptées sont
+  essayées en plus de ta phrase d'origine ; si elles aboutissent à des réponses différentes, l'appli ne tranche pas.
+- La réponse montre « Question comprise comme : … » pour que tu voies ce que l'IA a compris.
+- Pour un QCM mal dicté (les lettres A, B, C mal reconnues), l'IA remet les options en ordre ; elle ne peut pas changer leurs chiffres.
+- Si l'IA est indisponible (quota, réseau, clé), l'appli retombe sur la recherche classique et le dit.
+
+Mise en place : crée une clé gratuite chez le fournisseur (Google AI Studio : aistudio.google.com ; Groq : console.groq.com), colle-la dans
+Réglages → IA gratuite, puis **Tester la clé**. Si le modèle proposé n'existe plus, le test affiche les modèles disponibles : recopie-en un.
+Les offres gratuites ont des limites de requêtes qui peuvent changer sans préavis, et leurs conditions sur l'usage des données varient : lis-les.
+
 ## Comment poser les questions
 - **Vrai/faux** : dis l'affirmation. « Le conducteur doit avoir 21 ans pour la patente C. »
 - **QCM** : dis la question, puis « A … B … C … ». La reconnaissance vocale lit parfois mal les lettres : tu peux aussi écrire.

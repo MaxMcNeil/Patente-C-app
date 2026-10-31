@@ -300,8 +300,28 @@
     return m ? Object.assign({ options: m.opts, question: m.q }, answerMcq(idx, m.q, m.opts, o)) : answerYN(idx, text, o);
   }
 
+  /* Plusieurs formulations de la même question (l'originale en premier, puis les reformulations contrôlées de l'IA).
+     Une réponse n'est donnée que si toutes les formulations qui concluent disent la même chose. */
+  function answerMulti(idx, variants, o = {}) {
+    const res = variants.map((v, i) => {
+      const a = answer(idx, v.text, Object.assign({}, o, { sem: v.sem || o.sem }));
+      a.understood = v.text; a.variant = i;
+      return a;
+    });
+    const definite = res.filter(a => a.verdict !== "unsure");
+    if (!definite.length) return res[0];
+    if (new Set(definite.map(a => String(a.verdict))).size > 1) {
+      return { kind: res[0].kind, verdict: "unsure", reason: "reformulation-conflict",
+               alts: definite.map(a => Object.assign({}, a.passage, { says: a.verdict, understood: a.understood })) };
+    }
+    const rk = a => (a.passage ? a.passage.rank : 0) * 10 + ({ haute: 2, moyenne: 1, basse: 0 }[a.conf] || 0);
+    const best = definite.slice().sort((a, b) => rk(b) - rk(a) || a.variant - b.variant)[0];
+    best.viaIA = best.variant > 0;
+    return best;
+  }
+
   const windowTexts = t => windows(t).map(x => x.w);
-  const api = { norm, toks, buildIndex, search, parseMcq, answerMcq, answerYN, answer, sentences, resolveVotes, windowTexts, stmtOf };
+  const api = { norm, toks, buildIndex, search, parseMcq, answerMcq, answerYN, answer, sentences, resolveVotes, windowTexts, stmtOf, answerMulti, numsOf, hasNeg };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Engine = api;
 })(typeof self !== "undefined" ? self : this);
