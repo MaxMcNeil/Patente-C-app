@@ -36,6 +36,21 @@
     return u.length ? u.filter(w => set.has(w)).length / u.length : 0;
   };
 
+  /* ---------- sens (facultatif) : vecteurs fournis par l'appli, jamais requis ----------
+     sem = { qv, T, chunk: Map(id -> cosinus), win: Map(texte -> vecteur), optv: [vecteur par option] } */
+  const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+  const semCos = (sem, v, text) => { const w = sem && sem.win && sem.win.get(text); return w && v ? dot(v, w) : null; };
+  /* cosinus -> « couverture » pour les phrases vrai/faux : 0.8 seulement au-dessus du seuil T (jamais plus : confiance moyenne) */
+  const semCv = (sem, text) => { const c = semCos(sem, sem && sem.qv, text); return c !== null && c >= sem.T ? 0.8 : 0; };
+  /* cosinus -> score 0..1 pour une option de QCM */
+  const semOpt = (sem, i, text, optText) => {
+    const c = semCos(sem, sem && sem.optv && sem.optv[i], text);
+    if (c === null || c < sem.T - 0.1) return 0;
+    const nO = numsOf(optText);
+    if (nO.length && !nO.every(n => numsOf(text).includes(n))) return 0; // un chiffre de l'option absent du passage : le sens ne suffit pas
+    return Math.min(1, 0.5 + (c - (sem.T - 0.1)) / (1 - (sem.T - 0.1)) * 0.5);
+  };
+
   /* ---------- index BM25 ---------- */
   function buildIndex(chunks, sources) {
     const docs = chunks.map(c => {
@@ -61,25 +76,30 @@
     return s;
   }
 
-  function search(idx, query, k = 5) {
+  function search(idx, query, k = 5, sem = null) {
     const qt = toks(query);
-    if (!qt.length || !idx.N) return [];
-    const r = idx.docs.map(d => ({ d, s: bm25(idx, qt, d) })).filter(x => x.s > 0)
-      .sort((a, b) => b.s - a.s).slice(0, k);
-    const m = r.length ? r[0].s : 1;
-    r.forEach(x => (x.rel = x.s / m));
-    return r;
+    if (!idx.N || (!qt.length && !sem)) return [];
+    const all = idx.docs.map(d => ({ d, s: qt.length ? bm25(idx, qt, d) : 0 }));
+    const m0 = Math.max(1e-9, ...all.map(x => x.s));
+    all.forEach(x => {
+      const c = sem && sem.chunk ? sem.chunk.get(x.d.c.id) || 0 : 0;
+      const cs = sem && c >= sem.T - 0.15 ? Math.min(1, 0.5 + (c - (sem.T - 0.15)) / (1 - (sem.T - 0.15)) * 0.5) : 0; // idem : en dessous du seuil, le sens ne compte pas
+      x.rel = Math.max(x.s / m0, sem ? cs : 0);
+    });
+    return all.filter(x => x.rel > 0).sort((a, b) => b.rel - a.rel).slice(0, k);
   }
 
   /* meilleure fenêtre d'une ou deux phrases consécutives pour un ensemble de mots */
-  function bestWindow(text, qt) {
+  function bestWindow(text, qt, sem) {
     const ss = sentences(text);
-    let best = { w: ss[0] || text, cv: 0 };
+    let best = { w: ss[0] || text, cv: 0, c: 0, viaSens: false };
     for (let i = 0; i < ss.length; i++) {
       for (const w of [ss[i], i + 1 < ss.length ? ss[i] + " " + ss[i + 1] : null]) {
         if (!w) continue;
-        const cv = cover(qt, new Set(toks(w)));
-        if (cv > best.cv + 1e-9) best = { w, cv };
+        const lex = cover(qt, new Set(toks(w))), sv = sem ? semCv(sem, w) : 0;
+        const cv = Math.max(lex, sv), c = sv ? semCos(sem, sem.qv, w) : 0;
+        // à égalité de seuil, la phrase la plus proche par le sens gagne (évite d'importer la négation d'une phrase voisine)
+        if (cv + 0.001 * c > best.cv + 0.001 * best.c + 1e-9) best = { w, cv, c, viaSens: sv > lex };
       }
     }
     return best;
@@ -167,15 +187,18 @@
     return out;
   }
 
-  function scoreMcq(wins, qt, opts) {
+  function scoreMcq(wins, qt, opts, sem) {
     const sc = opts.map((o, i) => {
       const ot = toks(o);
-      let best = { score: 0, oc: 0, r: null, w: "" };
+      let best = { score: 0, oc: 0, r: null, w: "", viaSens: false };
       for (const { r, f, ws } of wins) {
         for (const x of ws) {
-          const oc = cover(ot, x.set), qc = cover(qt, x.set);
-          const v = f * x.f * (0.5 * oc + 0.5 * qc);
-          if (v > best.score) best = { score: v, oc, r, w: x.w };
+          let oc = cover(ot, x.set), qc = cover(qt, x.set), v = f * x.f * (0.5 * oc + 0.5 * qc), vs = false;
+          if (sem && oc < 0.5) {                       // les mots ne suffisent pas : on regarde le sens
+            const s = semOpt(sem, i, x.w, o);
+            if (s >= 0.5 && f * x.f * s > v) { v = f * x.f * s; oc = s; vs = true; }
+          }
+          if (v > best.score) best = { score: v, oc, r, w: x.w, viaSens: vs };
         }
       }
       return { i, ...best };
@@ -185,7 +208,7 @@
   }
 
   function answerMcq(idx, q, opts, o = {}) {
-    const top = search(idx, q, 12);
+    const top = search(idx, q, 12, o.sem);
     if (!top.length) return { kind: "mcq", verdict: "unsure", reason: "no-source", alts: [] };
     const qt = toks(q), groups = new Map();
     for (const r of top) {
@@ -198,11 +221,11 @@
     let gap = null;
     for (const rs of groups.values()) {            // chaque source indépendante vote séparément
       const wins = rs.map(r => ({ r, f: 0.6 + 0.4 * r.rel, ws: windows(r.d.c.t) }));
-      const { a, margin } = scoreMcq(wins, qt, opts);
+      const { a, margin } = scoreMcq(wins, qt, opts, o.sem);
       if (!a.r || a.oc < 0.5 || a.score < 0.4 || margin < 0.12) continue;
       const p = passage(idx, a.r, a.w);
       if (a.w.includes(GAP)) { gap = gap || p; continue; }
-      usable.push({ k: a.i, rank: p.rank, v: a.score, p, base: margin >= 0.35 && a.oc >= 0.75 ? "haute" : "moyenne" });
+      usable.push({ k: a.i, rank: p.rank, v: a.score, p, viaSens: a.viaSens, base: margin >= 0.35 && a.oc >= 0.75 ? "haute" : "moyenne" });
     }
     const decisive = o.strict ? usable.filter(x => x.rank >= 2) : usable;
     if (!decisive.length) {
@@ -214,7 +237,7 @@
     if (!res) return { kind: "mcq", verdict: "unsure", reason: "conflict", alts: decisive.slice(0, 4).map(x => say(x.p, x.k)) };
     const main = res.basis.slice().sort((a, b) => b.rank - a.rank || b.v - a.v)[0];
     return {
-      kind: "mcq", verdict: res.k, conf: confidence(res.basis, res.against, main.base), passage: main.p,
+      kind: "mcq", verdict: res.k, conf: confidence(res.basis, res.against, main.base), passage: main.p, viaSens: !!main.viaSens,
       support: res.basis.filter(x => x !== main).map(x => x.p), conflict: res.against.map(x => say(x.p, x.k)),
       nSources: res.basis.length, alts
     };
@@ -235,21 +258,24 @@
     return { v: "unsure", reason: "weak" };
   }
 
+  const stmtOf = raw => String(raw).replace(/(vrai ou faux|vero o falso|oui ou non|s[iì] o no|true or false|yes or no)/gi, " ")
+    .replace(/^[\s:,.\-–]+/, "")
+    .replace(/^\s*(est-ce que|est ce que|è vero che|è corretto che|is it true that)\s+/i, "").trim();
+
   function answerYN(idx, raw, o = {}) {
-    const stmt = raw.replace(/(vrai ou faux|vero o falso|oui ou non|s[iì] o no|true or false|yes or no)/gi, " ")
-      .replace(/^\s*(est-ce que|est ce que|è vero che|è corretto che|is it true that)\s+/i, "").trim();
+    const stmt = stmtOf(raw);
     const qt = toks(stmt);
-    if (!qt.length) return { kind: "yn", verdict: "unsure", reason: "empty", alts: [] };
-    const top = search(idx, stmt, 12);
+    if (!qt.length && !o.sem) return { kind: "yn", verdict: "unsure", reason: "empty", alts: [] };
+    const top = search(idx, stmt, 12, o.sem);
     if (!top.length) return { kind: "yn", verdict: "unsure", reason: "no-source", alts: [] };
     const per = new Map();                         // meilleure fenêtre par source indépendante
     for (const r of top) {
-      const w = bestWindow(r.d.c.t, qt), v = w.cv * 0.8 + r.rel * 0.2, g = grpOf(idx, r.d.c.s);
-      if (!per.has(g) || v > per.get(g).v) per.set(g, { v, cv: w.cv, w: w.w, r });
+      const w = bestWindow(r.d.c.t, qt, o.sem), v = w.cv * 0.8 + r.rel * 0.2, g = grpOf(idx, r.d.c.s);
+      if (!per.has(g) || v > per.get(g).v) per.set(g, { v, cv: w.cv, w: w.w, r, viaSens: w.viaSens });
     }
     const js = [...per.values()].sort((a, b) => b.v - a.v).map(c => {
       const p = passage(idx, c.r, c.w), j = judgeYN(stmt, c.w, c.cv);
-      return { k: j.v, rank: p.rank, v: c.v, p, j };
+      return { k: j.v, rank: p.rank, v: c.v, p, j, viaSens: c.viaSens };
     });
     const alts = top.slice(0, 2).map(r => passage(idx, r));
     const usable = js.filter(x => x.k !== "unsure");
@@ -264,7 +290,7 @@
     const main = res.basis.slice().sort((a, b) => b.rank - a.rank || b.v - a.v)[0];
     return {
       kind: "yn", verdict: res.k, conf: confidence(res.basis, res.against, main.j.conf), reason: main.j.reason,
-      sourceNums: main.j.sourceNums, passage: main.p, support: res.basis.filter(x => x !== main).map(x => x.p),
+      sourceNums: main.j.sourceNums, viaSens: !!main.viaSens, passage: main.p, support: res.basis.filter(x => x !== main).map(x => x.p),
       conflict: res.against.map(x => say(x.p, x.k)), nSources: res.basis.length, alts
     };
   }
@@ -274,7 +300,8 @@
     return m ? Object.assign({ options: m.opts, question: m.q }, answerMcq(idx, m.q, m.opts, o)) : answerYN(idx, text, o);
   }
 
-  const api = { norm, toks, buildIndex, search, parseMcq, answerMcq, answerYN, answer, sentences, resolveVotes };
+  const windowTexts = t => windows(t).map(x => x.w);
+  const api = { norm, toks, buildIndex, search, parseMcq, answerMcq, answerYN, answer, sentences, resolveVotes, windowTexts, stmtOf };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Engine = api;
 })(typeof self !== "undefined" ? self : this);

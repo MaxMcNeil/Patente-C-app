@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Test du sens</title>
+<style>
+:root{--bg:#eef2f7;--ink:#1b2a41;--mut:#5b6b80;--ac:#0f6f78;--ok:#1e7a3c;--ko:#b3261e;--card:#fff}
+@media(prefers-color-scheme:dark){:root{--bg:#121a26;--ink:#e8eef6;--mut:#9fb0c4;--ac:#4fc3cc;--ok:#6fd08c;--ko:#ff8a80;--card:#1c2736}}
+body{margin:0;padding:16px;background:var(--bg);color:var(--ink);font:17px/1.5 system-ui,sans-serif}
+main{max-width:620px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+button,a.b{padding:12px 16px;border-radius:10px;border:0;background:var(--ac);color:#fff;font:inherit;cursor:pointer;text-decoration:none;text-align:center}
+.card{background:var(--card);border-radius:12px;padding:12px 14px}
+.sub{color:var(--mut);font-size:.9rem}
+.ok{color:var(--ok);font-weight:700}.ko{color:var(--ko);font-weight:700}
+table{width:100%;border-collapse:collapse;font-size:.88rem}td{padding:4px 6px;border-top:1px solid color-mix(in srgb,var(--mut) 30%,transparent);vertical-align:top}
+</style>
+</head>
+<body>
+<main>
+  <h1>Test de la compréhension du sens</h1>
+  <p class="sub">Charge le modèle sur ce téléphone, compare des phrases qui disent la même chose avec d'autres qui parlent d'autre chose,
+  puis propose le seuil à utiliser. Prévois du Wi-Fi : ~120 Mo la première fois. Durée : quelques minutes.</p>
+  <button id="go">Lancer le test</button>
+  <p class="sub" id="st"></p>
+  <div class="card" id="out" hidden></div>
+  <div id="verdict" class="card" hidden></div>
+  <a class="b" href="./">Retour à l'appli</a>
+</main>
+<script src="engine.js"></script>
+<script src="sem.js"></script>
+<script>
+const P=[ // [catégorie, phrase A, phrase B]   P = même sens, S = même sujet mais autre fait, X = sans rapport
+["P","Il periodo di guida giornaliero non può superare 9 ore.","Il tempo di guida in un giorno non deve essere più di 9 ore."],
+["P","Dopo 4 ore e mezza di guida il conducente deve fare una pausa di 45 minuti.","Il camionista deve fermarsi 45 minuti dopo quattro ore e mezza al volante."],
+["P","Il tachigrafo registra i tempi di guida e di riposo.","Lo strumento che memorizza le ore di guida e di riposo è il cronotachigrafo."],
+["P","La pause est de 45 minutes après 4h30 de conduite.","La pausa è di 45 minuti dopo 4 ore e mezza di guida."],
+["P","Il riposo giornaliero regolare è di almeno 11 ore.","Ogni giorno bisogna riposare almeno undici ore di fila."],
+["P","Il conducente deve conservare i dischi del tachigrafo per un anno.","Per dodici mesi l'autista deve tenere con sé i fogli del cronotachigrafo."],
+["S","Il riposo giornaliero regolare è di almeno 11 ore.","La pausa dopo la guida è di 45 minuti."],
+["S","Il tachigrafo registra i tempi di guida.","La cintura di sicurezza è obbligatoria sui veicoli pesanti."],
+["S","La massa massima di un autoarticolato è di 44 tonnellate.","Il periodo di guida giornaliero non può superare 9 ore."],
+["X","Il periodo di guida giornaliero non può superare 9 ore.","Il mare Adriatico bagna la costa orientale dell'Italia."],
+["X","La pausa è di 45 minuti.","La ricetta della pasta al forno richiede mozzarella e ragù."],
+["X","Il tachigrafo registra i tempi di guida.","La squadra ha vinto la partita per due a uno."]
+];
+const NAMES={P:"même sens",S:"même sujet, autre fait",X:"sans rapport"};
+const $=id=>document.getElementById(id),esc=s=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+$("go").onclick=async()=>{
+  $("go").disabled=true;const st=$("st");
+  try{
+    st.textContent="Téléchargement du modèle…";
+    const t0=performance.now();
+    await Sem.load(p=>{st.textContent="Téléchargement du modèle : "+Math.round(p.progress||0)+" % ("+(p.file||"")+")"});
+    st.textContent="Modèle prêt ("+Math.round((performance.now()-t0)/1000)+" s). Calcul…";
+    const t1=performance.now();
+    const rows=[];
+    for(const [c,a,b] of P){const [va,vb]=await Sem.embed([a,b]);rows.push({c,a,b,cos:Sem.dot(va,vb)})}
+    const per=(performance.now()-t1)/(P.length*2);
+    const mn=cat=>Math.min(...rows.filter(r=>r.c===cat).map(r=>r.cos)),mx=cat=>Math.max(...rows.filter(r=>r.c===cat).map(r=>r.cos));
+    $("out").hidden=false;
+    $("out").innerHTML="<table>"+rows.map(r=>`<tr><td><b>${NAMES[r.c]}</b></td><td>${esc(r.a)}<br>${esc(r.b)}</td><td>${r.cos.toFixed(2)}</td></tr>`).join("")+"</table>"+
+      `<p class="sub">Vitesse : ${per.toFixed(0)} ms par phrase sur ce téléphone.</p>`;
+    const minP=mn("P"),maxOther=Math.max(mx("S"),mx("X"));
+    const v=$("verdict");v.hidden=false;
+    if(minP>maxOther+0.03){
+      const T=Math.min(0.95,Math.max(0.6,+((minP+maxOther)/2).toFixed(2)));
+      v.innerHTML=`<p class="ok">Séparation nette.</p><p>Phrases de même sens : au moins ${minP.toFixed(2)}. Autres : au plus ${maxOther.toFixed(2)}.</p>
+        <p>Seuil conseillé : <b>${T.toFixed(2)}</b></p><button id="ap">Utiliser ce seuil</button>`;
+      $("ap").onclick=()=>{try{localStorage.setItem("qv_semT",String(T))}catch(e){};$("ap").textContent="Enregistré ✔"};
+    }else{
+      v.innerHTML=`<p class="ko">Séparation insuffisante.</p><p>Phrases de même sens : au moins ${minP.toFixed(2)}, mais d'autres phrases montent jusqu'à ${maxOther.toFixed(2)}.
+        Ne t'y fie pas : garde le sens désactivé, ou utilise un seuil très haut (0,90) et relis toujours le passage cité.</p>`;
+    }
+    st.textContent="Test terminé.";
+  }catch(e){st.textContent="Échec : "+e.message+" — l'appli continue de marcher par les mots, sans le sens."}
+  $("go").disabled=false;
+};
+</script>
+</body>
+</html>

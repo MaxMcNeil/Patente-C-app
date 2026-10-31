@@ -70,6 +70,11 @@ summary{cursor:pointer;font-weight:600}
         <option value="en">English</option>
         <option value="ar">العربية</option>
       </select>
+      <label class="chk"><input type="checkbox" id="sem"> Comprendre le sens de mes questions (télécharge un modèle de ~120 Mo la première fois, puis fonctionne sans connexion)</label>
+      <label for="semT">Seuil de ressemblance du sens (0,60 à 0,95 ; règle-le avec le test)</label>
+      <input id="semT" type="number" min="0.6" max="0.95" step="0.01" inputmode="decimal">
+      <p class="sub" id="semmsg"></p>
+      <a class="btn" href="test-sens.html">Tester la compréhension du sens</a>
       <label class="chk"><input type="checkbox" id="strict"> Mode strict : ne conclure qu'avec des sources officielles ou vérifiées</label>
     </div>
     <div class="row">
@@ -98,31 +103,32 @@ summary{cursor:pointer;font-weight:600}
   </details>
 </main>
 <script src="engine.js"></script>
+<script src="sem.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const LOC={fr:"fr-FR",it:"it-IT",en:"en-US",ar:"ar-SA"};
 const L="ABCDEFGH";
 const T={
- fr:{yes:"Oui",no:"Non",unsure:"Je ne peux pas trancher avec certitude",ans:"Réponse",close:"Passages les plus proches",
+ fr:{sens:"Trouvé par le sens, pas par les mots : relis bien le passage.",yes:"Oui",no:"Non",unsure:"Je ne peux pas trancher avec certitude",ans:"Réponse",close:"Passages les plus proches",
      empty:"La base est vide. Synchronise-la dans Réglages ou charge des fichiers.",num:"La source indique : ",
      neg:"La négation diffère de la source : vérifie.",conf:"confiance",auto:"transcription automatique",video:"Voir la vidéo",
      nores:"Rien d'assez proche dans la base.",conflict:"Les sources se contredisent : je ne tranche pas.",
      unver:"Seules des sources non vérifiées en parlent (mode strict) : à vérifier.",contra:"Attention, une autre source dit le contraire :",
      also:"Confirmé aussi par",says:"dit",src:"Source",demo:"Démo : aucune base configurée. Ouvre Réglages."},
- it:{yes:"Vero",no:"Falso",unsure:"Non posso stabilirlo con certezza",ans:"Risposta",close:"Passaggi più vicini",
+ it:{sens:"Trovato dal significato, non dalle parole: rileggi bene il passaggio.",yes:"Vero",no:"Falso",unsure:"Non posso stabilirlo con certezza",ans:"Risposta",close:"Passaggi più vicini",
      empty:"La base è vuota. Sincronizzala in Impostazioni o carica dei file.",num:"La fonte indica: ",
      neg:"La negazione è diversa dalla fonte: controlla.",conf:"affidabilità",auto:"trascrizione automatica",video:"Guarda il video",
      nores:"Niente di abbastanza vicino nella base.",conflict:"Le fonti si contraddicono: non decido.",
      unver:"Ne parlano solo fonti non verificate (modalità rigorosa): da controllare.",contra:"Attenzione, un'altra fonte dice il contrario:",
      also:"Confermato anche da",says:"dice",src:"Fonte",demo:"Demo: nessuna base configurata. Apri Impostazioni."},
- en:{yes:"True",no:"False",unsure:"I can't say for sure",ans:"Answer",close:"Closest passages",
+ en:{sens:"Found by meaning, not by wording: read the passage carefully.",yes:"True",no:"False",unsure:"I can't say for sure",ans:"Answer",close:"Closest passages",
      empty:"The base is empty. Sync it in Settings or load files.",num:"The source says: ",
      neg:"The negation differs from the source: check it.",conf:"confidence",auto:"automatic transcript",video:"Watch the video",
      nores:"Nothing close enough in the base.",conflict:"The sources contradict each other: I won't decide.",
      unver:"Only unverified sources mention it (strict mode): check it.",contra:"Careful, another source says the opposite:",
      also:"Also confirmed by",says:"says",src:"Source",demo:"Demo: no base configured. Open Settings."},
- ar:{yes:"صحيح",no:"خطأ",unsure:"لا أستطيع الحسم بيقين",ans:"الجواب",close:"أقرب المقاطع",
+ ar:{sens:"وُجد بالمعنى لا باللفظ: أعد قراءة المقطع جيدًا.",yes:"صحيح",no:"خطأ",unsure:"لا أستطيع الحسم بيقين",ans:"الجواب",close:"أقرب المقاطع",
      empty:"القاعدة فارغة. زامنها من الإعدادات أو حمّل ملفات.",num:"المصدر يذكر: ",
      neg:"النفي يختلف عن المصدر: تحقق.",conf:"الثقة",auto:"تفريغ آلي",video:"شاهد الفيديو",
      nores:"لا شيء قريب بما يكفي في القاعدة.",conflict:"المصادر متناقضة: لن أحسم.",
@@ -136,6 +142,7 @@ const CONF={fr:{haute:"haute",moyenne:"moyenne",basse:"basse (une seule source n
 
 /* ---------- état ---------- */
 let CFG={bases:[],active:null,strict:false};
+let CHUNKS=[],SEMBUSY=false;
 let DEMO=[],MINE={questions:[],cours:[]},KB={sources:{},chunks:[],questions:[],meta:{}},IDX=null,Q=[];
 const active=()=>CFG.bases.find(b=>b.id===CFG.active)||null;
 const lang=()=>$("lang").value;
@@ -183,7 +190,7 @@ function refresh(){
   Q=[...(KB.questions||[]),...MINE.questions,...(a?[]:DEMO)];
   const chunks=[...(KB.chunks||[])],sources={...(KB.sources||{})};
   MINE.cours.forEach((p,i)=>{const id="local:"+p.titre;chunks.push({id:"l#"+i,s:id,t:p.texte});sources[id]={title:p.titre,type:"local",origin:"",statut:"non vérifié"}});
-  IDX=Engine.buildIndex(chunks,sources);
+  CHUNKS=chunks;IDX=Engine.buildIndex(chunks,sources);
   const name=(a&&a.name)||(KB.meta&&KB.meta.nom)||(a&&a.repo)||"Quiz vocal";
   $("titre").textContent=name;document.title=name;
   const ns=Object.keys(sources).length;
@@ -262,6 +269,7 @@ function showKb(heard,a){
       body+=`<div class="warn"><b>${esc(t.contra)}</b>`+a.conflict.map(p=>`<p>${esc(saysLabel(a,p.says))}</p>`+quote(p)).join("")+`</div>`;
       spoken+=" "+t.contra;
     }
+    if(a.viaSens)body+=`<p class="sub">${esc(t.sens)}</p>`;
     body+=`<p class="sub">${esc(t.conf)} : ${esc(CONF[lang()][a.conf]||a.conf)}</p>`;
     if(!(a.conflict&&a.conflict.length))spoken+=" "+a.passage.text.slice(0,300);
   }
@@ -278,14 +286,17 @@ function applyLexique(t){
   }
   return out;
 }
-function ask(heard){
+async function ask(heard){
   heard=heard.trim();
   if(!heard)return;
   const res=$("res");res.hidden=false;
   const q=best(applyLexique(heard));
   if(q)return showQuiz(heard,q);
   if(!IDX||!IDX.N){res.innerHTML=`<div class="heard">« ${esc(heard)} »</div><p>${esc(tr().empty)}</p>`;say(tr().empty);return}
-  showKb(heard,Engine.answer(IDX,applyLexique(heard),{strict:!!CFG.strict}));
+  const text=applyLexique(heard);
+  let sem=null;
+  if(CFG.sem&&window.Sem&&Sem.ready()&&Sem.vecs.size){try{sem=await Sem.prepare(IDX,text,semT())}catch(e){sem=null}}
+  showKb(heard,Engine.answer(IDX,text,{strict:!!CFG.strict,sem}));
 }
 
 /* ---------- voix ---------- */
@@ -307,12 +318,12 @@ function fillFields(){
   const a=active()||{};
   $("bname").value=a.name||"";$("repo").value=a.repo||"";$("branch").value=a.branch||"main";$("token").value=a.token||"";
   $("lang").value=LOC[a.lang]?a.lang:(LOC[(KB.meta||{}).langue]?KB.meta.langue:"fr");
-  $("strict").checked=!!CFG.strict;$("syncmsg").textContent="";
+  $("strict").checked=!!CFG.strict;$("sem").checked=!!CFG.sem;$("semT").value=CFG.semT||localStorage.getItem("qv_semT")||"";$("syncmsg").textContent="";
 }
 async function loadBase(){
   const k=await dget(kbKey());KB=(k&&Array.isArray(k.chunks))?k:{sources:{},chunks:[],questions:[],meta:{}};
   const m=await dget(mineKey());MINE=m||{questions:[],cours:[]};
-  fillFields();refresh();
+  fillFields();refresh();startSem();
 }
 $("baseSel").onchange=async()=>{CFG.active=$("baseSel").value;saveCfg();await loadBase()};
 $("addBase").onclick=async()=>{
@@ -326,6 +337,25 @@ $("delBase").onclick=async()=>{
 };
 $("lang").onchange=()=>{const a=active();if(a){a.lang=lang();saveCfg()}};
 $("strict").onchange=()=>{CFG.strict=$("strict").checked;saveCfg()};
+const semT=()=>{const v=parseFloat(CFG.semT||localStorage.getItem("qv_semT"));return v>=0.6&&v<=0.95?v:0.78};
+$("sem").onchange=()=>{CFG.sem=$("sem").checked;saveCfg();startSem()};
+$("semT").onchange=()=>{const v=parseFloat($("semT").value);CFG.semT=v>=0.6&&v<=0.95?v:null;saveCfg()};
+async function startSem(){
+  const m=$("semmsg");
+  if(!CFG.sem||!window.Sem){m.textContent="";return}
+  if(SEMBUSY)return;SEMBUSY=true;
+  try{
+    if(!Sem.ready()){
+      m.textContent="Téléchargement du modèle…";
+      await Sem.load(p=>{m.textContent="Téléchargement du modèle : "+Math.round(p.progress||0)+" %"});
+    }
+    const id=kbKey();
+    const store={load:()=>dget("vec:"+id),save:o=>dset("vec:"+id,o)};
+    const r=await Sem.index(CHUNKS,store,(d,n)=>{m.textContent="Lecture du sens des passages : "+d+" / "+n});
+    m.textContent="Compréhension du sens active ("+r.total+" morceaux).";
+  }catch(e){m.textContent="Sens indisponible : "+e.message+" (l'appli marche quand même, par les mots)."}
+  SEMBUSY=false;
+}
 
 /* ---------- synchronisation de la base privée ---------- */
 $("sync").onclick=async()=>{
@@ -346,7 +376,7 @@ $("sync").onclick=async()=>{
     KB=d;await dset(kbKey(),KB);
     if(!a.name&&d.meta.nom)a.name=d.meta.nom;
     if(LOC[d.meta.langue]&&!a.lang)a.lang=d.meta.langue;
-    saveCfg();fillFields();refresh();
+    saveCfg();fillFields();refresh();startSem();
     m.textContent="Base synchronisée : "+d.chunks.length+" passages, "+d.questions.length+" questions.";
   }catch(e){m.textContent="Échec : "+e.message}
 };
@@ -363,7 +393,7 @@ $("files").onchange=async e=>{
       t.split(/\n\s*\n/).map(x=>x.trim()).filter(x=>x.length>40).forEach(x=>MINE.cours.push({titre,texte:x}));
     }
   }
-  await dset(mineKey(),MINE);refresh();
+  await dset(mineKey(),MINE);refresh();startSem();
 };
 $("clr").onclick=async()=>{MINE={questions:[],cours:[]};await dset(mineKey(),MINE);refresh()};
 

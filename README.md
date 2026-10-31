@@ -25,6 +25,20 @@ Voir le README du dépôt privé pour créer le jeton et alimenter la base.
 Réglages → **Ajouter une base** : une base = un dépôt privé (patente, maths…). Un menu apparaît en haut pour passer de l'une à l'autre.
 Chaque base a sa langue, ses données et ses fichiers locaux : rien ne se mélange.
 
+## Comprendre le sens (facultatif)
+Sans cette option, l'appli cherche par les **mots** : si tu poses la question autrement que le cours, elle peut répondre « je ne peux pas trancher ».
+Avec **Réglages → Comprendre le sens**, un petit modèle multilingue (italien, français, anglais, arabe) tourne **dans le téléphone** :
+gratuit, sans serveur, sans clé. Il est téléchargé une fois (~120 Mo, Wi-Fi conseillé) depuis le dépôt public Hugging Face, puis gardé sur le téléphone.
+Les fichiers du moteur sont dans `vendor/` (rien d'autre n'est chargé depuis Internet).
+
+Le sens ne décide jamais seul : il sert à **retrouver le bon passage** et à le rapprocher de ta phrase. Les **chiffres**, les
+**négations** et l'**autorité des sources** sont toujours contrôlés comme avant. Une réponse trouvée par le sens est signalée
+(« Trouvé par le sens, pas par les mots : relis bien le passage ») et n'a jamais la confiance « haute ».
+
+**Avant de t'y fier : ouvre `test-sens.html`** (bouton dans Réglages). Il compare des phrases de même sens, de même sujet mais d'un autre fait,
+et sans rapport, vérifie que le modèle les sépare, et propose le **seuil** à utiliser. Si le test dit « séparation insuffisante », laisse l'option désactivée.
+Limite connue : les modèles de sens confondent parfois des contraires (« augmente » / « diminue ») ; relis toujours le passage cité.
+
 ## Comment poser les questions
 - **Vrai/faux** : dis l'affirmation. « Le conducteur doit avoir 21 ans pour la patente C. »
 - **QCM** : dis la question, puis « A … B … C … ». La reconnaissance vocale lit parfois mal les lettres : tu peux aussi écrire.
