@@ -269,14 +269,23 @@ function showKb(heard,a){
   say(spoken);
 }
 
+function applyLexique(t){
+  const lex=(KB.meta&&KB.meta.lexique)||[];
+  let out=t;
+  for(const [a,b] of lex){
+    const re=new RegExp("(^|[^\\p{L}\\p{N}])"+a.replace(/[.*+?^${}()|[\]\\]/g,"\\$&").replace(/\s+/g,"\\s+")+"(?=$|[^\\p{L}\\p{N}])","giu");
+    out=out.replace(re,(m,p)=>p+b);
+  }
+  return out;
+}
 function ask(heard){
   heard=heard.trim();
   if(!heard)return;
   const res=$("res");res.hidden=false;
-  const q=best(heard);
+  const q=best(applyLexique(heard));
   if(q)return showQuiz(heard,q);
   if(!IDX||!IDX.N){res.innerHTML=`<div class="heard">« ${esc(heard)} »</div><p>${esc(tr().empty)}</p>`;say(tr().empty);return}
-  showKb(heard,Engine.answer(IDX,heard,{strict:!!CFG.strict}));
+  showKb(heard,Engine.answer(IDX,applyLexique(heard),{strict:!!CFG.strict}));
 }
 
 /* ---------- voix ---------- */

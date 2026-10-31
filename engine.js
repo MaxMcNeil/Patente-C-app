@@ -85,7 +85,7 @@
     return best;
   }
 
-  const RANK = { "officiel": 3, "vérifié": 2, "non vérifié": 1 };
+  const RANK = { "correctif": 4, "officiel": 3, "vérifié": 2, "non vérifié": 1 };
   const hostOf = u => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch (e) { return ""; } };
   /* deux pages d'un même site, ou deux copies d'une même chose, ne comptent que pour UNE source indépendante */
   const grpOf = (idx, sid) => { const s = idx.sources[sid] || {}; return s.site || hostOf(s.origin || "") || sid; };
@@ -107,6 +107,9 @@
     if (keys.length === 1) return { k: keys[0], basis: decisive, against: [] };
     const top = k => Math.max(0, ...decisive.filter(x => x.k === k).map(x => x.rank));
     const ranked = keys.map(k => ({ k, t: top(k) })).sort((a, b) => b.t - a.t);
+    if (ranked[0].t === 4 && ranked[1].t < 4) { // correctif manuel : il fait foi, on n'affiche aucun désaccord
+      return { k: ranked[0].k, basis: decisive.filter(x => x.k === ranked[0].k), against: [] };
+    }
     if (ranked[0].t >= 2 && ranked[0].t > ranked[1].t) {
       return { k: ranked[0].k, basis: decisive.filter(x => x.k === ranked[0].k), against: decisive.filter(x => x.k !== ranked[0].k) };
     }
