@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Patente C – Quiz vocal</title>
+<title>Quiz vocal</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0f6f78">
 <link rel="icon" href="icon-192.png">
@@ -19,13 +19,15 @@ h1{font-size:1.25rem;margin:0}
 #mic.on{outline:6px solid color-mix(in srgb,var(--ac) 35%,transparent)}
 #mic:focus-visible,button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
 form{display:flex;gap:8px}
-textarea,input,select{min-width:0;padding:12px;border-radius:10px;border:1px solid var(--mut);background:var(--card);color:var(--ink);font:inherit}
+textarea,input[type=text],input[type=password],input:not([type]),select{min-width:0;padding:12px;border-radius:10px;border:1px solid var(--mut);background:var(--card);color:var(--ink);font:inherit}
 textarea{flex:1;resize:vertical}
 form button{padding:0 16px;border-radius:10px;border:0;background:var(--ink);color:var(--bg);font:inherit;cursor:pointer}
 .card{background:var(--card);border-radius:14px;padding:16px}
 .heard{color:var(--mut);font-size:.9rem}
 .verdict{font-size:1.6rem;font-weight:700;margin:6px 0}
 .ok{color:var(--ok)}.ko{color:var(--ko)}.wa{color:var(--wa)}
+.warn{border-inline-start:4px solid var(--wa);padding:6px 12px;margin:10px 0;background:color-mix(in srgb,var(--wa) 10%,transparent);border-radius:6px}
+.warn b{color:var(--wa)}
 ul{list-style:none;padding:0;margin:8px 0}
 li{padding:6px 10px;border-radius:8px}
 li.good{background:color-mix(in srgb,var(--ok) 18%,transparent);font-weight:600}
@@ -36,13 +38,15 @@ details{background:var(--card);border-radius:14px;padding:12px 16px}
 summary{cursor:pointer;font-weight:600}
 .row{display:flex;flex-direction:column;gap:8px;margin:10px 0}
 .row label{font-size:.85rem;color:var(--mut)}
+.row label.chk{display:flex;gap:8px;align-items:center;font-size:1rem;color:var(--ink)}
 [hidden]{display:none}
 </style>
 </head>
 <body>
 <main>
   <div>
-    <h1 id="titre">Patente C</h1>
+    <h1 id="titre">Quiz vocal</h1>
+    <select id="baseSel" aria-label="Base de connaissances" hidden></select>
     <p class="sub" id="etat">Chargement…</p>
   </div>
 
@@ -59,26 +63,33 @@ summary{cursor:pointer;font-weight:600}
   <details id="reg">
     <summary>Réglages</summary>
     <div class="row">
-      <label for="lang">Langue de la voix et des réponses</label>
+      <label for="lang">Langue de la voix et des réponses (pour cette base)</label>
       <select id="lang">
         <option value="fr">Français</option>
         <option value="it">Italiano</option>
         <option value="en">English</option>
         <option value="ar">العربية</option>
       </select>
+      <label class="chk"><input type="checkbox" id="strict"> Mode strict : ne conclure qu'avec des sources officielles ou vérifiées</label>
     </div>
     <div class="row">
-      <label for="repo">Base de connaissances (dépôt privé) : propriétaire/nom</label>
+      <label for="bname">Nom de la base (facultatif)</label>
+      <input id="bname" placeholder="ex. Patente C" autocomplete="off">
+      <label for="repo">Dépôt privé de la base : propriétaire/nom</label>
       <input id="repo" placeholder="MaxMcNeil/Patente-C-base" autocapitalize="off" autocomplete="off">
       <label for="branch">Branche</label>
       <input id="branch" value="main" autocapitalize="off" autocomplete="off">
       <label for="token">Jeton GitHub en lecture seule (reste sur ce téléphone)</label>
       <input id="token" type="password" autocomplete="off">
-      <div><button type="button" id="sync" class="btn">Enregistrer et synchroniser</button></div>
+      <div>
+        <button type="button" id="sync" class="btn">Enregistrer et synchroniser</button>
+        <button type="button" id="addBase" class="btn">Ajouter une base</button>
+        <button type="button" id="delBase" class="btn">Supprimer cette base</button>
+      </div>
       <p class="sub" id="syncmsg"></p>
     </div>
     <div class="row">
-      <label>Fichiers locaux (restent sur ce téléphone)</label>
+      <label>Fichiers locaux de cette base (restent sur ce téléphone)</label>
       <div>
         <label class="btn">Charger mes fichiers<input type="file" id="files" multiple accept=".json,.md,.txt" hidden></label>
         <button type="button" id="clr" class="btn">Effacer</button>
@@ -96,34 +107,56 @@ const T={
  fr:{yes:"Oui",no:"Non",unsure:"Je ne peux pas trancher avec certitude",ans:"Réponse",close:"Passages les plus proches",
      empty:"La base est vide. Synchronise-la dans Réglages ou charge des fichiers.",num:"La source indique : ",
      neg:"La négation diffère de la source : vérifie.",conf:"confiance",auto:"transcription automatique",video:"Voir la vidéo",
-     nores:"Rien d'assez proche dans la base."},
+     nores:"Rien d'assez proche dans la base.",conflict:"Les sources se contredisent : je ne tranche pas.",
+     unver:"Seules des sources non vérifiées en parlent (mode strict) : à vérifier.",contra:"Attention, une autre source dit le contraire :",
+     also:"Confirmé aussi par",says:"dit",src:"Source",demo:"Démo : aucune base configurée. Ouvre Réglages."},
  it:{yes:"Vero",no:"Falso",unsure:"Non posso stabilirlo con certezza",ans:"Risposta",close:"Passaggi più vicini",
      empty:"La base è vuota. Sincronizzala in Impostazioni o carica dei file.",num:"La fonte indica: ",
      neg:"La negazione è diversa dalla fonte: controlla.",conf:"affidabilità",auto:"trascrizione automatica",video:"Guarda il video",
-     nores:"Niente di abbastanza vicino nella base."},
+     nores:"Niente di abbastanza vicino nella base.",conflict:"Le fonti si contraddicono: non decido.",
+     unver:"Ne parlano solo fonti non verificate (modalità rigorosa): da controllare.",contra:"Attenzione, un'altra fonte dice il contrario:",
+     also:"Confermato anche da",says:"dice",src:"Fonte",demo:"Demo: nessuna base configurata. Apri Impostazioni."},
  en:{yes:"True",no:"False",unsure:"I can't say for sure",ans:"Answer",close:"Closest passages",
      empty:"The base is empty. Sync it in Settings or load files.",num:"The source says: ",
      neg:"The negation differs from the source: check it.",conf:"confidence",auto:"automatic transcript",video:"Watch the video",
-     nores:"Nothing close enough in the base."},
+     nores:"Nothing close enough in the base.",conflict:"The sources contradict each other: I won't decide.",
+     unver:"Only unverified sources mention it (strict mode): check it.",contra:"Careful, another source says the opposite:",
+     also:"Also confirmed by",says:"says",src:"Source",demo:"Demo: no base configured. Open Settings."},
  ar:{yes:"صحيح",no:"خطأ",unsure:"لا أستطيع الحسم بيقين",ans:"الجواب",close:"أقرب المقاطع",
      empty:"القاعدة فارغة. زامنها من الإعدادات أو حمّل ملفات.",num:"المصدر يذكر: ",
      neg:"النفي يختلف عن المصدر: تحقق.",conf:"الثقة",auto:"تفريغ آلي",video:"شاهد الفيديو",
-     nores:"لا شيء قريب بما يكفي في القاعدة."}
+     nores:"لا شيء قريب بما يكفي في القاعدة.",conflict:"المصادر متناقضة: لن أحسم.",
+     unver:"لا يتحدث عن ذلك سوى مصادر غير موثّقة (الوضع الصارم): تحقق.",contra:"انتبه، مصدر آخر يقول العكس:",
+     also:"مؤكَّد أيضًا من",says:"يقول",src:"المصدر",demo:"عرض تجريبي: لا توجد قاعدة. افتح الإعدادات."}
 };
-const CONF={fr:{haute:"haute",moyenne:"moyenne"},it:{haute:"alta",moyenne:"media"},en:{haute:"high",moyenne:"medium"},ar:{haute:"عالية",moyenne:"متوسطة"}};
+const CONF={fr:{haute:"haute",moyenne:"moyenne",basse:"basse (une seule source non vérifiée)"},
+            it:{haute:"alta",moyenne:"media",basse:"bassa (una sola fonte non verificata)"},
+            en:{haute:"high",moyenne:"medium",basse:"low (a single unverified source)"},
+            ar:{haute:"عالية",moyenne:"متوسطة",basse:"منخفضة (مصدر واحد غير موثّق)"}};
 
-let Q=[],BASE=[],MINE={questions:[],cours:[]},KB={sources:{},chunks:[]},IDX=null;
+/* ---------- état ---------- */
+let CFG={bases:[],active:null,strict:false};
+let DEMO=[],MINE={questions:[],cours:[]},KB={sources:{},chunks:[],questions:[],meta:{}},IDX=null,Q=[];
+const active=()=>CFG.bases.find(b=>b.id===CFG.active)||null;
 const lang=()=>$("lang").value;
 const tr=()=>T[lang()];
 
-/* ---------- réglages ---------- */
-const cfg=()=>{try{return JSON.parse(localStorage.getItem("qv_cfg"))||{}}catch(e){return{}}};
-const setCfg=c=>{try{localStorage.setItem("qv_cfg",JSON.stringify(c))}catch(e){}};
+/* ---------- réglages (localStorage) ---------- */
+function loadCfg(){
+  let c={};try{c=JSON.parse(localStorage.getItem("qv_cfg"))||{}}catch(e){}
+  if(Array.isArray(c.bases)){CFG=Object.assign(CFG,c)}
+  else if(c.repo||c.token){ // ancien format : une seule base
+    CFG.bases=[{id:"b1",name:"",repo:c.repo||"",branch:c.branch||"main",token:c.token||"",lang:c.lang||""}];CFG.active="b1";
+  }
+  if(!active())CFG.active=CFG.bases[0]?CFG.bases[0].id:null;
+}
+const saveCfg=()=>{try{localStorage.setItem("qv_cfg",JSON.stringify(CFG))}catch(e){}};
 
-/* ---------- stockage local (IndexedDB) ---------- */
+/* ---------- stockage local (IndexedDB), une clé par base ---------- */
 const DB=()=>new Promise((res,rej)=>{const r=indexedDB.open("quizvocal",1);r.onupgradeneeded=()=>r.result.createObjectStore("d");r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
 const dget=async k=>{try{const db=await DB();return await new Promise(res=>{const q=db.transaction("d").objectStore("d").get(k);q.onsuccess=()=>res(q.result);q.onerror=()=>res(undefined)})}catch(e){return undefined}};
 const dset=async(k,v)=>{try{const db=await DB();return await new Promise(res=>{const t=db.transaction("d","readwrite");t.objectStore("d").put(v,k);t.oncomplete=()=>res();t.onerror=()=>res()})}catch(e){}};
+const kbKey=()=>"kb:"+(CFG.active||"demo"),mineKey=()=>"mine:"+(CFG.active||"demo");
 
 function say(t){
   if(!window.speechSynthesis||!t)return;
@@ -131,7 +164,7 @@ function say(t){
   const u=new SpeechSynthesisUtterance(t);u.lang=LOC[lang()];speechSynthesis.speak(u);
 }
 
-/* ---------- questions de quiz.json : correspondance stricte ---------- */
+/* ---------- questions de quiz : correspondance stricte ---------- */
 function best(heard){
   const ut=[...new Set(Engine.toks(heard))];
   if(!ut.length)return null;
@@ -146,25 +179,34 @@ function best(heard){
 }
 
 function refresh(){
-  Q=[...BASE,...MINE.questions];
+  const a=active();
+  Q=[...(KB.questions||[]),...MINE.questions,...(a?[]:DEMO)];
   const chunks=[...(KB.chunks||[])],sources={...(KB.sources||{})};
   MINE.cours.forEach((p,i)=>{const id="local:"+p.titre;chunks.push({id:"l#"+i,s:id,t:p.texte});sources[id]={title:p.titre,type:"local",origin:"",statut:"non vérifié"}});
   IDX=Engine.buildIndex(chunks,sources);
+  const name=(a&&a.name)||(KB.meta&&KB.meta.nom)||(a&&a.repo)||"Quiz vocal";
+  $("titre").textContent=name;document.title=name;
   const ns=Object.keys(sources).length;
-  $("etat").textContent=Q.length+" questions · "+chunks.length+" passages · "+ns+" sources"+(KB.updated?" · base du "+KB.updated.slice(0,10):"");
+  $("etat").textContent=a?(Q.length+" questions · "+chunks.length+" passages · "+ns+" sources"+(KB.updated?" · base du "+KB.updated.slice(0,10):"")):T.fr.demo;
+  const sel=$("baseSel");
+  sel.hidden=CFG.bases.length<2;
+  sel.innerHTML=CFG.bases.map(b=>`<option value="${esc(b.id)}"${b.id===CFG.active?" selected":""}>${esc(b.name||b.repo||"Base")}</option>`).join("");
 }
 
 /* ---------- affichage ---------- */
 function srcLine(p){
-  const t=tr(),bits=[];
+  const bits=[];
   if(p.title)bits.push(esc(p.title));
   if(p.loc)bits.push(esc(p.loc));
   bits.push(esc(p.statut));
-  if(p.auto)bits.push(esc(t.auto));
+  if(p.auto)bits.push(esc(tr().auto));
+  if(p.date)bits.push(esc(p.date));
   let s=bits.join(" · ");
   if(/^https?:\/\//.test(p.origin))s+=` · <a href="${esc(p.origin)}" target="_blank" rel="noopener">lien</a>`;
   return `<p class="sub">${s}</p>`;
 }
+const saysLabel=(a,k)=>a.kind==="mcq"?(tr().ans+" "+L[k]):(k==="yes"?tr().yes:tr().no);
+const quote=(p,extra)=>`<blockquote>${esc(p.text)}</blockquote>${srcLine(p)}${extra||""}`;
 
 function showQuiz(heard,q){
   const t=tr(),res=$("res");
@@ -179,22 +221,32 @@ function showQuiz(heard,q){
     bad=!yes;verdict=yes?t.yes:t.no;spoken=verdict+".";
   }
   if(q.explication)spoken+=" "+q.explication;
+  const from=q.titre?`<p class="sub">${esc(t.src)} : ${esc(q.titre)} · ${esc(q.statut||"non vérifié")}</p>`:"";
   res.innerHTML=`<div class="heard">« ${esc(heard)} »</div><p class="sub">${esc(q.question)}</p>
     <div class="verdict ${bad?"ko":"ok"}">${esc(verdict)}</div>${body}
-    ${q.explication?`<p>${esc(q.explication)}</p>`:""}
+    ${q.explication?`<p>${esc(q.explication)}</p>`:""}${from}
     ${q.video?`<p><a href="${esc(q.video)}" target="_blank" rel="noopener">${esc(t.video)}</a></p>`:""}`;
   say(spoken);
 }
 
 function showKb(heard,a){
   const t=tr(),res=$("res");
-  let verdict,cls,spoken,extra="",body="";
+  let verdict,cls,spoken,body="";
   if(a.verdict==="unsure"){
-    verdict=t.unsure;cls="wa";spoken=verdict+".";
-    body=a.alts&&a.alts.length
-      ?`<p class="sub">${esc(t.close)}</p>`+a.alts.map(p=>`<blockquote>${esc(p.text)}</blockquote>${srcLine(p)}`).join("")
-      :`<p>${esc(t.nores)}</p>`;
+    cls="wa";
+    if(a.reason==="conflict"){
+      verdict=t.conflict;
+      body=a.alts.map(p=>`<p><b>${esc(t.says)} : ${esc(saysLabel(a,p.says))}</b></p>`+quote(p)).join("");
+    }else if(a.reason==="unverified-only"){
+      verdict=t.unver;
+      body=a.alts.map(p=>`<p><b>${esc(t.says)} : ${esc(saysLabel(a,p.says))}</b></p>`+quote(p)).join("");
+    }else{
+      verdict=t.unsure;
+      body=a.alts&&a.alts.length?`<p class="sub">${esc(t.close)}</p>`+a.alts.map(p=>quote(p)).join(""):`<p>${esc(t.nores)}</p>`;
+    }
+    spoken=verdict+".";
   }else{
+    let extra="";
     if(a.kind==="mcq"){
       verdict=t.ans+" "+L[a.verdict];cls="ok";spoken=verdict+" : "+a.options[a.verdict]+".";
       body="<ul>"+a.options.map((c,k)=>`<li class="${k===a.verdict?"good":""}">${L[k]}. ${esc(c)}</li>`).join("")+"</ul>";
@@ -204,9 +256,14 @@ function showKb(heard,a){
       if(a.reason==="number")extra=`<p>${esc(t.num)}${esc(a.sourceNums.join(", "))}</p>`;
       if(a.reason==="negation")extra=`<p>${esc(t.neg)}</p>`;
     }
-    body+=extra+`<blockquote>${esc(a.passage.text)}</blockquote>`+srcLine(a.passage)+
-      `<p class="sub">${esc(t.conf)} : ${esc(CONF[lang()][a.conf]||a.conf)}</p>`;
-    spoken+=" "+a.passage.text.slice(0,300);
+    body+=extra+quote(a.passage);
+    if(a.support&&a.support.length)body+=`<p class="sub">${esc(t.also)} : ${a.support.map(p=>esc(p.title||p.origin)).join(", ")}</p>`;
+    if(a.conflict&&a.conflict.length){
+      body+=`<div class="warn"><b>${esc(t.contra)}</b>`+a.conflict.map(p=>`<p>${esc(saysLabel(a,p.says))}</p>`+quote(p)).join("")+`</div>`;
+      spoken+=" "+t.contra;
+    }
+    body+=`<p class="sub">${esc(t.conf)} : ${esc(CONF[lang()][a.conf]||a.conf)}</p>`;
+    if(!(a.conflict&&a.conflict.length))spoken+=" "+a.passage.text.slice(0,300);
   }
   res.innerHTML=`<div class="heard">« ${esc(heard)} »</div><div class="verdict ${cls}">${esc(verdict)}</div>${body}`;
   say(spoken);
@@ -219,7 +276,7 @@ function ask(heard){
   const q=best(heard);
   if(q)return showQuiz(heard,q);
   if(!IDX||!IDX.N){res.innerHTML=`<div class="heard">« ${esc(heard)} »</div><p>${esc(tr().empty)}</p>`;say(tr().empty);return}
-  showKb(heard,Engine.answer(IDX,heard));
+  showKb(heard,Engine.answer(IDX,heard,{strict:!!CFG.strict}));
 }
 
 /* ---------- voix ---------- */
@@ -236,25 +293,52 @@ $("mic").onclick=()=>{
 $("f").onsubmit=e=>{e.preventDefault();ask($("txt").value)};
 $("txt").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ask($("txt").value)}});
 
-/* ---------- langue ---------- */
-$("lang").onchange=()=>{const c=cfg();c.lang=lang();setCfg(c)};
+/* ---------- bases (une par matière, isolées) ---------- */
+function fillFields(){
+  const a=active()||{};
+  $("bname").value=a.name||"";$("repo").value=a.repo||"";$("branch").value=a.branch||"main";$("token").value=a.token||"";
+  $("lang").value=LOC[a.lang]?a.lang:(LOC[(KB.meta||{}).langue]?KB.meta.langue:"fr");
+  $("strict").checked=!!CFG.strict;$("syncmsg").textContent="";
+}
+async function loadBase(){
+  const k=await dget(kbKey());KB=(k&&Array.isArray(k.chunks))?k:{sources:{},chunks:[],questions:[],meta:{}};
+  const m=await dget(mineKey());MINE=m||{questions:[],cours:[]};
+  fillFields();refresh();
+}
+$("baseSel").onchange=async()=>{CFG.active=$("baseSel").value;saveCfg();await loadBase()};
+$("addBase").onclick=async()=>{
+  const id="b"+Date.now();CFG.bases.push({id,name:"",repo:"",branch:"main",token:"",lang:""});CFG.active=id;saveCfg();
+  KB={sources:{},chunks:[],questions:[],meta:{}};MINE={questions:[],cours:[]};fillFields();refresh();$("repo").focus();
+};
+$("delBase").onclick=async()=>{
+  const a=active();if(!a)return;
+  if(!confirm("Supprimer la base « "+(a.name||a.repo||"sans nom")+" » de ce téléphone ? (le dépôt GitHub n'est pas touché)"))return;
+  CFG.bases=CFG.bases.filter(b=>b.id!==a.id);CFG.active=CFG.bases[0]?CFG.bases[0].id:null;saveCfg();await loadBase();
+};
+$("lang").onchange=()=>{const a=active();if(a){a.lang=lang();saveCfg()}};
+$("strict").onchange=()=>{CFG.strict=$("strict").checked;saveCfg()};
 
 /* ---------- synchronisation de la base privée ---------- */
 $("sync").onclick=async()=>{
-  const c=cfg();
-  c.repo=$("repo").value.trim();c.branch=$("branch").value.trim()||"main";c.token=$("token").value.trim();
-  setCfg(c);
   const m=$("syncmsg");
-  if(!/^[\w.-]+\/[\w.-]+$/.test(c.repo)||!c.token){m.textContent="Renseigne le dépôt (propriétaire/nom) et le jeton.";return}
+  let a=active();
+  if(!a){a={id:"b"+Date.now(),name:"",repo:"",branch:"main",token:"",lang:""};CFG.bases.push(a);CFG.active=a.id}
+  a.name=$("bname").value.trim();a.repo=$("repo").value.trim();a.branch=$("branch").value.trim()||"main";a.token=$("token").value.trim();a.lang=lang();
+  saveCfg();
+  if(!/^[\w.-]+\/[\w.-]+$/.test(a.repo)||!a.token){m.textContent="Renseigne le dépôt (propriétaire/nom) et le jeton.";return}
   m.textContent="Synchronisation…";
   try{
-    const r=await fetch(`https://api.github.com/repos/${c.repo}/contents/kb/index.json?ref=${encodeURIComponent(c.branch)}`,
-      {headers:{Authorization:"Bearer "+c.token,Accept:"application/vnd.github.raw+json"}});
+    const r=await fetch(`https://api.github.com/repos/${a.repo}/contents/kb/index.json?ref=${encodeURIComponent(a.branch)}`,
+      {headers:{Authorization:"Bearer "+a.token,Accept:"application/vnd.github.raw+json"}});
     if(!r.ok)throw new Error(r.status===404?"dépôt, branche ou fichier kb/index.json introuvable (ou jeton sans accès)":r.status===401?"jeton refusé":"erreur "+r.status);
     const d=await r.json();
     if(!d||!Array.isArray(d.chunks))throw new Error("fichier de base invalide");
-    KB=d;await dset("kb",KB);refresh();
-    m.textContent="Base synchronisée : "+d.chunks.length+" passages.";
+    d.questions=d.questions||[];d.meta=d.meta||{};
+    KB=d;await dset(kbKey(),KB);
+    if(!a.name&&d.meta.nom)a.name=d.meta.nom;
+    if(LOC[d.meta.langue]&&!a.lang)a.lang=d.meta.langue;
+    saveCfg();fillFields();refresh();
+    m.textContent="Base synchronisée : "+d.chunks.length+" passages, "+d.questions.length+" questions.";
   }catch(e){m.textContent="Échec : "+e.message}
 };
 
@@ -270,20 +354,17 @@ $("files").onchange=async e=>{
       t.split(/\n\s*\n/).map(x=>x.trim()).filter(x=>x.length>40).forEach(x=>MINE.cours.push({titre,texte:x}));
     }
   }
-  await dset("mine",MINE);refresh();
+  await dset(mineKey(),MINE);refresh();
 };
-$("clr").onclick=async()=>{MINE={questions:[],cours:[]};await dset("mine",MINE);refresh()};
+$("clr").onclick=async()=>{MINE={questions:[],cours:[]};await dset(mineKey(),MINE);refresh()};
 
 /* ---------- démarrage ---------- */
 (async()=>{
-  const c=cfg();
-  $("repo").value=c.repo||"";$("branch").value=c.branch||"main";$("token").value=c.token||"";
-  let defLang="fr";
-  try{const r=await fetch("quiz/quiz.json");const d=await r.json();BASE=d.questions||[];$("titre").textContent=d.titre||"Patente C";if(d.langue)defLang=d.langue.slice(0,2)}catch(e){}
-  $("lang").value=LOC[c.lang]?c.lang:(LOC[defLang]?defLang:"fr");
-  const m=await dget("mine");if(m)MINE=m;
-  const k=await dget("kb");if(k&&Array.isArray(k.chunks))KB=k;
-  refresh();
+  loadCfg();
+  if(!CFG.bases.length){ // aucune base : démo avec les quelques questions d'exemple
+    try{const r=await fetch("quiz/quiz.json");const d=await r.json();DEMO=d.questions||[];if(d.titre)$("titre").textContent=d.titre}catch(e){}
+  }
+  await loadBase();
 })();
 if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
 </script>

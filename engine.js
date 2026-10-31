@@ -18,6 +18,7 @@
     "pas non jamais aucun aucune sans mai nessun nessuno nessuna senza not never no without nobody لا ليس لم لن بدون غير"
   ).split(/\s+/));
 
+  const GAP = "[…]"; // mot illisible laissé par l'OCR : on ne conclut jamais sur un passage qui en contient
   const digits = s => s.replace(/[٠-٩]/g, d => "٠١٢٣٤٥٦٧٨٩".indexOf(d));
   const norm = s => digits(String(s)).toLowerCase().normalize("NFD").replace(/\p{M}/gu, "")
     .replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
@@ -26,7 +27,10 @@
   const toks = s => norm(s).split(" ").filter(w => w && (isNum(w) || (w.length > 1 && !STOP.has(w)))).map(stem);
   const numsOf = s => (digits(String(s)).match(/\d+(?:[.,]\d+)?/g) || []).map(x => x.replace(",", "."));
   const hasNeg = s => norm(s).split(" ").some(w => NEG.has(w));
-  const sentences = t => (t.match(/[^.!?؟…]+(?:[.!?؟…]+|$)/g) || [t]).map(x => x.trim()).filter(Boolean);
+  const sentences = t => {
+    const safe = String(t).split(GAP).join("\u0001"); // « […] » ne doit pas couper la phrase
+    return (safe.match(/[^.!?؟…]+(?:[.!?؟…]+|$)/g) || [safe]).map(x => x.split("\u0001").join(GAP).trim()).filter(Boolean);
+  };
   const cover = (qt, set) => {
     const u = [...new Set(qt)];
     return u.length ? u.filter(w => set.has(w)).length / u.length : 0;
@@ -81,12 +85,39 @@
     return best;
   }
 
+  const RANK = { "officiel": 3, "vérifié": 2, "non vérifié": 1 };
+  const hostOf = u => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch (e) { return ""; } };
+  /* deux pages d'un même site, ou deux copies d'une même chose, ne comptent que pour UNE source indépendante */
+  const grpOf = (idx, sid) => { const s = idx.sources[sid] || {}; return s.site || hostOf(s.origin || "") || sid; };
+
   function passage(idx, r, sentence) {
-    const c = r.d.c, src = idx.sources[c.s] || {};
+    const c = r.d.c, src = idx.sources[c.s] || {}, statut = src.statut || "non vérifié";
     return {
       text: sentence || c.t, chunk: c.t, loc: c.l || null, title: src.title || "", origin: src.origin || "",
-      statut: src.statut || "non vérifié", auto: !!src.auto, type: src.type || ""
+      statut, rank: RANK[statut] || 1, auto: !!src.auto, type: src.type || "", date: src.date || "", sid: c.s
     };
+  }
+  const say = (p, k) => Object.assign({}, p, { says: k });
+
+  /* Départage des votes entre sources indépendantes.
+     Un camp gagne seulement s'il a une source vérifiée ou officielle ET que son meilleur rang dépasse strictement
+     celui de l'autre camp. Sinon (officiel contre officiel, deux non vérifiées, etc.) : on ne tranche pas. */
+  function resolveVotes(decisive) {
+    const keys = [...new Set(decisive.map(x => x.k))];
+    if (keys.length === 1) return { k: keys[0], basis: decisive, against: [] };
+    const top = k => Math.max(0, ...decisive.filter(x => x.k === k).map(x => x.rank));
+    const ranked = keys.map(k => ({ k, t: top(k) })).sort((a, b) => b.t - a.t);
+    if (ranked[0].t >= 2 && ranked[0].t > ranked[1].t) {
+      return { k: ranked[0].k, basis: decisive.filter(x => x.k === ranked[0].k), against: decisive.filter(x => x.k !== ranked[0].k) };
+    }
+    return null;
+  }
+
+  function confidence(basis, against, base) {
+    let c = base;
+    if (Math.max(...basis.map(x => x.rank)) === 1 && basis.length === 1) c = "basse"; // une seule source non vérifiée
+    if (against.length && c === "haute") c = "moyenne";                               // quelqu'un dit le contraire
+    return c;
   }
 
   /* ---------- QCM : A ... B ... C ... ---------- */
@@ -133,73 +164,114 @@
     return out;
   }
 
-  function answerMcq(idx, q, opts) {
-    const top = search(idx, q, 8);
-    if (!top.length) return { kind: "mcq", verdict: "unsure", reason: "no-source", alts: [] };
-    const qt = toks(q);
-    const wins = top.map(r => ({ r, f: 0.6 + 0.4 * r.rel, ws: windows(r.d.c.t) }));
+  function scoreMcq(wins, qt, opts) {
     const sc = opts.map((o, i) => {
       const ot = toks(o);
       let best = { score: 0, oc: 0, r: null, w: "" };
       for (const { r, f, ws } of wins) {
         for (const x of ws) {
           const oc = cover(ot, x.set), qc = cover(qt, x.set);
-          const s = f * x.f * (0.5 * oc + 0.5 * qc);
-          if (s > best.score) best = { score: s, oc, r, w: x.w };
+          const v = f * x.f * (0.5 * oc + 0.5 * qc);
+          if (v > best.score) best = { score: v, oc, r, w: x.w };
         }
       }
       return { i, ...best };
     });
     const [a, b] = [...sc].sort((x, y) => y.score - x.score);
-    const margin = a.score > 0 ? (a.score - (b ? b.score : 0)) / a.score : 0;
-    const alts = top.slice(0, 2).map(r => passage(idx, r));
-    if (!a.r || a.oc < 0.5 || a.score < 0.4 || margin < 0.12) {
-      return { kind: "mcq", verdict: "unsure", reason: "ambiguous", alts };
+    return { a, margin: a.score > 0 ? (a.score - (b ? b.score : 0)) / a.score : 0 };
+  }
+
+  function answerMcq(idx, q, opts, o = {}) {
+    const top = search(idx, q, 12);
+    if (!top.length) return { kind: "mcq", verdict: "unsure", reason: "no-source", alts: [] };
+    const qt = toks(q), groups = new Map();
+    for (const r of top) {
+      const g = grpOf(idx, r.d.c.s);
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(r);
     }
+    const alts = top.slice(0, 2).map(r => passage(idx, r));
+    const usable = [];
+    let gap = null;
+    for (const rs of groups.values()) {            // chaque source indépendante vote séparément
+      const wins = rs.map(r => ({ r, f: 0.6 + 0.4 * r.rel, ws: windows(r.d.c.t) }));
+      const { a, margin } = scoreMcq(wins, qt, opts);
+      if (!a.r || a.oc < 0.5 || a.score < 0.4 || margin < 0.12) continue;
+      const p = passage(idx, a.r, a.w);
+      if (a.w.includes(GAP)) { gap = gap || p; continue; }
+      usable.push({ k: a.i, rank: p.rank, v: a.score, p, base: margin >= 0.35 && a.oc >= 0.75 ? "haute" : "moyenne" });
+    }
+    const decisive = o.strict ? usable.filter(x => x.rank >= 2) : usable;
+    if (!decisive.length) {
+      if (usable.length) return { kind: "mcq", verdict: "unsure", reason: "unverified-only", alts: usable.map(x => say(x.p, x.k)) };
+      return gap ? { kind: "mcq", verdict: "unsure", reason: "gap", alts: [gap] }
+                 : { kind: "mcq", verdict: "unsure", reason: "ambiguous", alts };
+    }
+    const res = resolveVotes(decisive);
+    if (!res) return { kind: "mcq", verdict: "unsure", reason: "conflict", alts: decisive.slice(0, 4).map(x => say(x.p, x.k)) };
+    const main = res.basis.slice().sort((a, b) => b.rank - a.rank || b.v - a.v)[0];
     return {
-      kind: "mcq", verdict: a.i, conf: margin >= 0.35 && a.oc >= 0.75 ? "haute" : "moyenne",
-      passage: passage(idx, a.r, a.w), alts
+      kind: "mcq", verdict: res.k, conf: confidence(res.basis, res.against, main.base), passage: main.p,
+      support: res.basis.filter(x => x !== main).map(x => x.p), conflict: res.against.map(x => say(x.p, x.k)),
+      nSources: res.basis.length, alts
     };
   }
 
   /* ---------- vrai / faux ---------- */
-  function answerYN(idx, raw) {
+  function judgeYN(stmt, w, cv) {
+    if (w.includes(GAP)) return { v: "unsure", reason: "gap" };
+    if (cv < 0.6) return { v: "unsure", reason: "weak" };
+    const nS = numsOf(stmt), nC = numsOf(w);
+    if (nS.some(n => !nC.includes(n))) {
+      return nC.length ? { v: "no", reason: "number", conf: "haute", sourceNums: nC } : { v: "unsure", reason: "number-missing" };
+    }
+    if (cv >= 0.75) {
+      return hasNeg(stmt) !== hasNeg(w) ? { v: "no", reason: "negation", conf: "moyenne" }
+                                        : { v: "yes", conf: cv >= 0.9 ? "haute" : "moyenne" };
+    }
+    return { v: "unsure", reason: "weak" };
+  }
+
+  function answerYN(idx, raw, o = {}) {
     const stmt = raw.replace(/(vrai ou faux|vero o falso|oui ou non|s[iì] o no|true or false|yes or no)/gi, " ")
       .replace(/^\s*(est-ce que|est ce que|è vero che|è corretto che|is it true that)\s+/i, "").trim();
     const qt = toks(stmt);
     if (!qt.length) return { kind: "yn", verdict: "unsure", reason: "empty", alts: [] };
-    const top = search(idx, stmt, 5);
+    const top = search(idx, stmt, 12);
     if (!top.length) return { kind: "yn", verdict: "unsure", reason: "no-source", alts: [] };
-    let best = null;
+    const per = new Map();                         // meilleure fenêtre par source indépendante
     for (const r of top) {
-      const w = bestWindow(r.d.c.t, qt);
-      const v = w.cv * 0.8 + r.rel * 0.2;
-      if (!best || v > best.v) best = { v, cv: w.cv, w: w.w, r };
+      const w = bestWindow(r.d.c.t, qt), v = w.cv * 0.8 + r.rel * 0.2, g = grpOf(idx, r.d.c.s);
+      if (!per.has(g) || v > per.get(g).v) per.set(g, { v, cv: w.cv, w: w.w, r });
     }
+    const js = [...per.values()].sort((a, b) => b.v - a.v).map(c => {
+      const p = passage(idx, c.r, c.w), j = judgeYN(stmt, c.w, c.cv);
+      return { k: j.v, rank: p.rank, v: c.v, p, j };
+    });
     const alts = top.slice(0, 2).map(r => passage(idx, r));
-    const p = passage(idx, best.r, best.w);
-    if (best.cv < 0.6) return { kind: "yn", verdict: "unsure", reason: "weak", alts };
-    const nS = numsOf(stmt), nC = numsOf(best.w);
-    const missing = nS.filter(n => !nC.includes(n));
-    if (missing.length) {
-      return nC.length
-        ? { kind: "yn", verdict: "no", conf: "haute", reason: "number", sourceNums: nC, passage: p, alts }
-        : { kind: "yn", verdict: "unsure", reason: "number-missing", alts };
+    const usable = js.filter(x => x.k !== "unsure");
+    const decisive = o.strict ? usable.filter(x => x.rank >= 2) : usable;
+    if (!decisive.length) {
+      if (usable.length) return { kind: "yn", verdict: "unsure", reason: "unverified-only", alts: usable.map(x => say(x.p, x.k)) };
+      const first = js[0];
+      return { kind: "yn", verdict: "unsure", reason: first.j.reason, alts: first.j.reason === "gap" ? [first.p] : alts };
     }
-    const negMismatch = hasNeg(stmt) !== hasNeg(best.w);
-    if (best.cv >= 0.75) {
-      if (negMismatch) return { kind: "yn", verdict: "no", conf: "moyenne", reason: "negation", passage: p, alts };
-      return { kind: "yn", verdict: "yes", conf: best.cv >= 0.9 ? "haute" : "moyenne", passage: p, alts };
-    }
-    return { kind: "yn", verdict: "unsure", reason: "weak", alts };
+    const res = resolveVotes(decisive);
+    if (!res) return { kind: "yn", verdict: "unsure", reason: "conflict", alts: decisive.slice(0, 4).map(x => say(x.p, x.k)) };
+    const main = res.basis.slice().sort((a, b) => b.rank - a.rank || b.v - a.v)[0];
+    return {
+      kind: "yn", verdict: res.k, conf: confidence(res.basis, res.against, main.j.conf), reason: main.j.reason,
+      sourceNums: main.j.sourceNums, passage: main.p, support: res.basis.filter(x => x !== main).map(x => x.p),
+      conflict: res.against.map(x => say(x.p, x.k)), nSources: res.basis.length, alts
+    };
   }
 
-  function answer(idx, text) {
+  function answer(idx, text, o = {}) {
     const m = parseMcq(text);
-    return m ? Object.assign({ options: m.opts, question: m.q }, answerMcq(idx, m.q, m.opts)) : answerYN(idx, text);
+    return m ? Object.assign({ options: m.opts, question: m.q }, answerMcq(idx, m.q, m.opts, o)) : answerYN(idx, text, o);
   }
 
-  const api = { norm, toks, buildIndex, search, parseMcq, answerMcq, answerYN, answer, sentences };
+  const api = { norm, toks, buildIndex, search, parseMcq, answerMcq, answerYN, answer, sentences, resolveVotes };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Engine = api;
 })(typeof self !== "undefined" ? self : this);
