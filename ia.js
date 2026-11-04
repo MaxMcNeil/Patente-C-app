@@ -91,15 +91,25 @@ Réponds uniquement par un objet JSON :
 
   /* erreurs où changer de modèle peut aider (jamais pour une clé refusée : 401) */
   const modelProblem = (status, raw) =>
-    status === 404 || status === 429 || status === 403 || status === 500 || status === 503 ||
+    status === 404 || status === 408 || status === 429 || status === 403 || status === 500 || status === 503 ||
     (status === 400 && /model/i.test(raw) && !/response_format|json_object|json mode/i.test(raw));
 
   async function call(c, body, signal) {
-    const send = () => fetch(base(c) + "/chat/completions", {
-      method: "POST", signal,
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + c.key },
-      body: JSON.stringify(body)
-    });
+    /* chaque essai a son propre délai (9 s) : un modèle lent est sauté au lieu de bloquer tous les suivants */
+    const send = async () => {
+      const c2 = new AbortController(), tm = setTimeout(() => c2.abort(), 9000), fwd = () => c2.abort();
+      if (signal) signal.addEventListener("abort", fwd);
+      try {
+        return await fetch(base(c) + "/chat/completions", {
+          method: "POST", signal: c2.signal,
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + c.key },
+          body: JSON.stringify(body)
+        });
+      } catch (e) {
+        if (signal && signal.aborted) throw e;                              // délai global dépassé : on s'arrête
+        return { ok: false, status: 408, text: async () => "délai dépassé (" + body.model + ")" };
+      } finally { clearTimeout(tm); if (signal) signal.removeEventListener("abort", fwd); }
+    };
     const start = body.model, tried = [start];
     let r = await send(), raw = null;
     for (let n = 1; ; n++) {
@@ -124,7 +134,7 @@ Réponds uniquement par un objet JSON :
   }
 
   async function attempt(c, text, o) {
-    const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 15000);
+    const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 30000);
     try {
       const body = {
         model: c.model, temperature: 0, max_tokens: 700,
@@ -214,7 +224,7 @@ La citation doit exister telle quelle dans le passage. Langue des passages : ${L
     const user = "Phrase de l'utilisateur : " + text + "\n\nPassages :\n" + passages.map((x, i) => (i + 1) + ". " + x.text.slice(0, 700)).join("\n");
     const errs = [];
     for (const c of [Ia.cfg, Ia.cfg2].filter(Boolean)) {
-      const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 15000);
+      const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 30000);
       try {
         const body = { model: c.model, temperature: 0, max_tokens: 700,
           messages: [{ role: "system", content: answerPrompt(o.lang, o.subject) }, { role: "user", content: user }],
@@ -263,7 +273,7 @@ Si tu n'es pas sûr, dis-le dans "risposta" et mets "altro". N'invente jamais un
     if (!Ia.ready()) return null;
     const errs = [];
     for (const c of [Ia.cfg, Ia.cfg2].filter(Boolean)) {
-      const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 20000);
+      const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 35000);
       try {
         const body = { model: c.model, temperature: 0, max_tokens: 800,
           messages: [{ role: "system", content: freePrompt(o.subject) }, { role: "user", content: text }],
@@ -289,7 +299,7 @@ Si tu n'es pas sûr, dis-le dans "risposta" et mets "altro". N'invente jamais un
   };
 
   async function testOne(c) {
-    const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 12000);
+    const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 40000);
     const nm = c.label || c.model;
     try {
       await call(c, { model: c.model, max_tokens: 5, messages: [{ role: "user", content: "OK ?" }] }, ctrl.signal);

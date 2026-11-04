@@ -180,7 +180,8 @@ function loadCfg(){
   }
   if(!active())CFG.active=CFG.bases[0]?CFG.bases[0].id:null;
 }
-const saveCfg=()=>{try{localStorage.setItem("qv_cfg",JSON.stringify(CFG))}catch(e){}};
+const DEF={name:"Patente C CQC",repo:"MaxMcNeil/Patente-C-base",branch:"main"};   // valeurs proposées d'office (le jeton reste à saisir une seule fois)
+const saveCfg=()=>{try{localStorage.setItem("qv_cfg",JSON.stringify(CFG))}catch(e){}try{dset("cfgbak",JSON.parse(JSON.stringify(CFG))).catch(()=>{})}catch(e){}};
 
 /* ---------- stockage local (IndexedDB), une clé par base ---------- */
 const DB=()=>new Promise((res,rej)=>{const r=indexedDB.open("quizvocal",1);r.onupgradeneeded=()=>r.result.createObjectStore("d");r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
@@ -460,7 +461,8 @@ $("conv").onclick=()=>{
 /* ---------- bases (une par matière, isolées) ---------- */
 function fillFields(){
   const a=active()||{};
-  $("bname").value=a.name||"";$("repo").value=a.repo||"";$("branch").value=a.branch||"main";$("token").value=a.token||"";
+  const useDef=CFG.bases.length<=1;               // une seule base : on propose la tienne ; pour une 2e base, les champs restent vides
+  $("bname").value=a.name||(useDef?DEF.name:"");$("repo").value=a.repo||(useDef?DEF.repo:"");$("branch").value=a.branch||DEF.branch;$("token").value=a.token||"";
   $("lang").value=LOC[a.lang]?a.lang:(LOC[(KB.meta||{}).langue]?KB.meta.langue:"fr");
   iaFill();$("strict").checked=!!CFG.strict;$("sem").checked=!!CFG.sem;$("semT").value=CFG.semT||localStorage.getItem("qv_semT")||"";$("syncmsg").textContent="";
 }
@@ -564,6 +566,9 @@ $("clr").onclick=async()=>{MINE={questions:[],cours:[]};await dset(mineKey(),MIN
 const SAFE=/[?&]safe=1/.test(location.search);
 (async()=>{
   loadCfg();
+  try{ // réglages perdus (stockage vidé par Chrome) : on les récupère dans la copie de secours
+    if(!CFG.bases.some(b=>b.repo&&b.token)){const bk=await dget("cfgbak");if(bk&&Array.isArray(bk.bases)&&bk.bases.some(b=>b.repo&&b.token)){Object.assign(CFG,bk);saveCfg()}}
+  }catch(e){}
   let crashed=false;
   try{if(localStorage.getItem("qv_semrun")){crashed=true;localStorage.removeItem("qv_semrun");if(CFG.sem){CFG.sem=false;saveCfg()}}}catch(e){}
   if(SAFE||crashed){
