@@ -84,13 +84,13 @@ summary{cursor:pointer;font-weight:600}
       <label for="iaProv">Fournisseur</label>
       <select id="iaProv"><option value="gemini">Google AI Studio (Gemini)</option><option value="groq">Groq</option><option value="autre">Autre (compatible OpenAI)</option></select>
       <label for="iaKey">Clé gratuite du fournisseur (reste sur ce téléphone)</label>
-      <input id="iaKey" type="password" autocomplete="off">
+      <input id="iaKey" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" style="-webkit-text-security:disc">
       <label for="iaModel">Modèle</label>
       <input id="iaModel" autocapitalize="off" autocomplete="off">
       <label for="iaUrl">Adresse de l'API</label>
       <input id="iaUrl" autocapitalize="off" autocomplete="off">
       <label for="iaKey2">Clé de secours (facultatif) : l'autre fournisseur, utilisé si le premier est en panne ou sans quota</label>
-      <input id="iaKey2" type="password" autocomplete="off">
+      <input id="iaKey2" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" style="-webkit-text-security:disc">
       <div><button type="button" id="iaTest" class="btn">Tester les clés</button></div>
       <p class="sub" id="iamsg"></p>
       <label class="chk"><input type="checkbox" id="strict"> Mode strict : ne conclure qu'avec des sources officielles ou vérifiées</label>
@@ -473,6 +473,7 @@ $("strict").onchange=()=>{CFG.strict=$("strict").checked;saveCfg()};
 const IAURL={gemini:"https://generativelanguage.googleapis.com/v1beta/openai",groq:"https://api.groq.com/openai/v1"};
 function iaCfg(){CFG.ia=CFG.ia||{on:false,provider:"gemini",url:IAURL.gemini,model:"gemini-2.5-flash",key:""};return CFG.ia}
 function iaBackup(){const c=iaCfg(),o=c.provider==="groq"?"gemini":"groq",P=window.Ia&&Ia.PRESETS[o];return c.key2&&P?{url:P.url,model:P.model,key:c.key2,label:P.label}:null}
+if(window.Ia)Ia.onHeal=(c,m)=>{const x=iaCfg();if(c.label===(Ia.PRESETS[x.provider]||{}).label){x.model=m;$("iaModel").value=m;saveCfg()}};
 function iaApply(){const c=iaCfg();if(window.Ia)Ia.configure(c.on||c.key?{url:c.url,model:c.model,key:c.key,label:(Ia.PRESETS[c.provider]||{}).label}:null,iaBackup())}
 function iaFill(){const c=iaCfg();$("ia").checked=!!c.on;$("iaAns").checked=c.answer!==false;$("iaProv").value=c.provider;$("iaKey").value=c.key;$("iaKey2").value=c.key2||"";$("iaModel").value=c.model;$("iaUrl").value=c.url;iaApply()}
 $("iaAns").onchange=()=>{iaCfg().answer=$("iaAns").checked;saveCfg()};

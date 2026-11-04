@@ -54,12 +54,34 @@ Réponds uniquement par un objet JSON :
     try { return JSON.parse(m[0]); } catch (e) { return null; }
   };
 
+  const base = c => c.url.replace(/\/$/, "");
+  /* modèle introuvable (404) : on lit la liste du fournisseur et on prend un modèle qui existe vraiment */
+  async function pickModel(c, signal) {
+    const r = await fetch(base(c) + "/models", { headers: { Authorization: "Bearer " + c.key }, signal });
+    if (!r.ok) return null;
+    const ids = ((await r.json()).data || []).map(x => String(x.id || "").replace(/^models\//, "")).filter(Boolean);
+    const bad = /tts|image|live|embed|audio|vision|guard|whisper|preview|lite/i;
+    const prefs = [/^llama-3\.3-70b-versatile$/, /^gemini-2\.5-flash$/, /^gemini-flash-latest$/, /^gemini-.*flash/, /^llama/, /./];
+    for (const re of prefs) { const m = ids.find(i => re.test(i) && !bad.test(i)); if (m) return m; }
+    return null;
+  }
+
   async function call(c, body, signal) {
-    const r = await fetch(c.url.replace(/\/$/, "") + "/chat/completions", {
+    const send = () => fetch(base(c) + "/chat/completions", {
       method: "POST", signal,
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + c.key },
       body: JSON.stringify(body)
     });
+    let r = await send();
+    if (r.status === 404 && !c._healed) {
+      c._healed = true;
+      const m = await pickModel(c, signal).catch(() => null);
+      if (m && m !== body.model) {
+        const from = body.model; body.model = m; c.model = m;
+        if (Ia.onHeal) try { Ia.onHeal(c, m, from); } catch (e) {}
+        r = await send();
+      }
+    }
     if (!r.ok) {
       let m = ""; try { m = (await r.json()).error.message || ""; } catch (e) {}
       const err = new Error(r.status + (m ? " " + m.slice(0, 160) : "")); err.status = r.status; throw err;
