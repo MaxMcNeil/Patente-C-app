@@ -178,6 +178,9 @@ function loadCfg(){
   else if(c.repo||c.token){ // ancien format : une seule base
     CFG.bases=[{id:"b1",name:"",repo:c.repo||"",branch:c.branch||"main",token:c.token||"",lang:c.lang||""}];CFG.active="b1";
   }
+  // bases vides (ajoutées par erreur, jamais remplies) : supprimées, pour que tes valeurs par défaut s'appliquent
+  const kept=CFG.bases.filter(b=>b.repo||b.token||b.name);
+  if(kept.length!==CFG.bases.length){CFG.bases=kept;try{localStorage.setItem("qv_cfg",JSON.stringify(CFG))}catch(e){}}
   if(!active())CFG.active=CFG.bases[0]?CFG.bases[0].id:null;
 }
 const DEF={name:"Patente C CQC",repo:"MaxMcNeil/Patente-C-base",branch:"main"};   // valeurs proposées d'office (le jeton reste à saisir une seule fois)
