@@ -165,6 +165,7 @@ const CONF={fr:{haute:"haute",moyenne:"moyenne",basse:"basse (une seule source n
 /* ---------- état ---------- */
 let CFG={bases:[],active:null,strict:false};
 let CHUNKS=[],SEMBUSY=false;
+let IDXP=null,IDXSIG=null,IDXSEQ=0;
 let DEMO=[],MINE={questions:[],cours:[]},KB={sources:{},chunks:[],questions:[],meta:{}},IDX=null,Q=[];
 const active=()=>CFG.bases.find(b=>b.id===CFG.active)||null;
 const lang=()=>$("lang").value;
@@ -225,7 +226,12 @@ function refresh(){
   Q=[...(KB.questions||[]),...MINE.questions,...(a?[]:DEMO)];
   const chunks=[...(KB.chunks||[])],sources={...(KB.sources||{})};
   MINE.cours.forEach((p,i)=>{const id="local:"+p.titre;chunks.push({id:"l#"+i,s:id,t:p.texte});sources[id]={title:p.titre,type:"local",origin:"",statut:"non vérifié"}});
-  CHUNKS=chunks;IDX=Engine.buildIndex(chunks,sources);
+  CHUNKS=chunks;
+  const sig=[KB,MINE,MINE.cours.length,chunks.length];
+  if(!IDXSIG||IDXSIG.some((x,i)=>x!==sig[i])){   // même base : on ne refait pas le calcul
+    IDXSIG=sig;const my=++IDXSEQ;
+    IDXP=Engine.buildIndexAsync(chunks,sources).then(i=>{if(my===IDXSEQ)IDX=i;return i}).catch(()=>{});
+  }
   const name=(a&&a.name)||(KB.meta&&KB.meta.nom)||(a&&a.repo)||"Quiz vocal";
   $("titre").textContent=name;document.title=name;
   const ns=Object.keys(sources).length;
@@ -346,15 +352,17 @@ async function ask(heard){
   heard=heard.trim();
   if(!heard)return;
   const res=$("res");res.hidden=false;
+  if(IDXP)await IDXP;                      // l'index se construit par petites tranches : on l'attend ici
   const text=applyLexique(heard);
   let variants=[{text}],note="";
   const iaOn=!SAFE&&!!(CFG.ia&&CFG.ia.on&&window.Ia&&Ia.ready());
-  if(iaOn){
+  const aiAnswers=iaOn&&CFG.ia.answer!==false;     // l'IA répond directement : inutile de lui demander aussi de reformuler (1 appel au lieu de 2)
+  if(iaOn&&!aiAnswers){
     const U=await Ia.understand(text,{lang:(KB.meta&&KB.meta.langue)||lang(),subject:(KB.meta&&KB.meta.nom)||""});
     if(U)U.variants.forEach(v=>variants.push({text:v}));
     else note=tr().iaoff+" ("+Ia.last+")";
   }
-  if(iaOn&&CFG.ia.answer!==false){
+  if(aiAnswers){
     const mcq=Engine.parseMcq(text);
     const F=await Ia.free(text,mcq,{subject:(KB.meta&&KB.meta.nom)||""});
     if(F){

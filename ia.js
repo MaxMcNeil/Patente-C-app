@@ -62,23 +62,37 @@ Réponds uniquement par un objet JSON :
   };
 
   const base = c => c.url.replace(/\/$/, "");
-  /* modèle introuvable (404) : on lit la liste du fournisseur et on choisit un vrai modèle de TEXTE, jamais voix/image/garde-fou */
-  const NOT_TEXT = /tts|orpheus|playai|canopy|image|imagen|live|embed|audio|vision|guard|safeguard|whisper|preview|lite|veo|aqa|robotics|computer-use|compound/i;
+  /* ---------- choix automatique du modèle ----------
+     L'appli lit la liste des modèles que TA clé peut utiliser, ne garde que les modèles de texte, les classe
+     (le plus récent et rapide d'abord) et les essaie l'un après l'autre. Le modèle qui marche est retenu. */
+  const NOT_TEXT = /tts|orpheus|playai|canopy|image|imagen|live|embed|audio|vision|guard|safeguard|whisper|veo|aqa|robotics|computer-use|compound|moderation|translate/i;
+  const TEXTY = /gemini|gemma|llama|gpt|qwen|mistral|deepseek|kimi|grok/i;
   const ver = id => { const m = id.match(/gemini-(\d+(?:\.\d+)?)-flash$/); return m ? parseFloat(m[1]) : -1; };
-  async function pickModel(c, signal, cur, hint) {
-    const r = await fetch(base(c) + "/models", { headers: { Authorization: "Bearer " + c.key }, signal });
-    if (!r.ok) return null;
-    const ids = ((await r.json()).data || []).map(x => String(x.id || "").replace(/^models\//, "")).filter(Boolean)
-      .filter(i => i !== cur && !NOT_TEXT.test(i));
-    if (hint && ids.includes(hint)) return hint;
-    const flash = ids.filter(i => ver(i) > 0).sort((x, y) => ver(y) - ver(x));
-    const prefs = [/^gemini-flash-latest$/, null, /^llama-3\.3-70b/, /^llama-3\.1-8b/, /^openai\/gpt-oss-20b$/, /^openai\/gpt-oss-120b$/, /^qwen\//, /^llama/];
-    for (const re of prefs) {
-      if (re === null) { if (flash[0]) return flash[0]; continue; }
-      const m = ids.find(i => re.test(i)); if (m) return m;
-    }
-    return null;                                              // mieux vaut une erreur claire qu'un mauvais modèle
+  const MAX_TRIES = 5;
+
+  function rank(ids, hint) {
+    ids = ids.filter(i => !NOT_TEXT.test(i) && TEXTY.test(i));
+    const out = [], add = i => { if (i && !out.includes(i)) out.push(i); };
+    if (hint && ids.includes(hint)) add(hint);
+    ids.filter(i => /^gemini-flash-latest$/.test(i)).forEach(add);
+    ids.filter(i => ver(i) > 0).sort((x, y) => ver(y) - ver(x)).forEach(add);
+    for (const re of [/^llama-3\.3-70b/, /^llama-3\.1-8b/, /^openai\/gpt-oss-20b$/, /^openai\/gpt-oss-120b$/, /^qwen\//, /^gemini-.*flash/, /^gemma/, /^llama/, /^gemini/])
+      ids.filter(i => re.test(i)).forEach(add);
+    ids.forEach(add);
+    return out;
   }
+  Ia.rank = rank;
+
+  async function listModels(c, signal) {
+    const r = await fetch(base(c) + "/models", { headers: { Authorization: "Bearer " + c.key }, signal });
+    if (!r.ok) return [];
+    return ((await r.json()).data || []).map(x => String(x.id || "").replace(/^models\//, "")).filter(Boolean);
+  }
+
+  /* erreurs où changer de modèle peut aider (jamais pour une clé refusée : 401) */
+  const modelProblem = (status, raw) =>
+    status === 404 || status === 429 || status === 403 || status === 500 || status === 503 ||
+    (status === 400 && /model/i.test(raw) && !/response_format|json_object|json mode/i.test(raw));
 
   async function call(c, body, signal) {
     const send = () => fetch(base(c) + "/chat/completions", {
@@ -86,32 +100,31 @@ Réponds uniquement par un objet JSON :
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + c.key },
       body: JSON.stringify(body)
     });
+    const start = body.model, tried = [start];
     let r = await send(), raw = null;
-    if (r.status === 404 && !c._healed) {
-      c._healed = true;
-      try { raw = typeof r.text === "function" ? await r.text() : JSON.stringify(await r.json()); } catch (e) { raw = ""; }
-      const h = String(raw).match(/use models\/([\w.\-]+)/i);
-      const m = await pickModel(c, signal, body.model, h && h[1]).catch(() => null);
-      if (m) {
-        const from = body.model; body.model = m; c.model = m;
-        if (Ia.onHeal) try { Ia.onHeal(c, m, from); } catch (e) {}
-        r = await send(); raw = null;
+    for (let n = 1; ; n++) {
+      if (r.ok) {
+        if (body.model !== start) { c.model = body.model; if (Ia.onHeal) try { Ia.onHeal(c, body.model, start); } catch (e) {} }
+        return r.json();
       }
+      if (raw === null) { try { raw = typeof r.text === "function" ? await r.text() : JSON.stringify(await r.json()); } catch (e) { raw = ""; } }
+      let next = null;
+      if (n < MAX_TRIES && modelProblem(r.status, raw)) {
+        if (!c._ranked) c._ranked = rank(await listModels(c, signal).catch(() => []), (String(raw).match(/use models\/([\w.\-]+)/i) || [])[1]);
+        next = c._ranked.find(i => !tried.includes(i)) || null;
+      }
+      if (!next) break;
+      tried.push(next); body.model = next; r = await send(); raw = null;
     }
-    if (!r.ok) {
-      let m = "";
-      try {
-        if (raw === null) raw = typeof r.text === "function" ? await r.text() : JSON.stringify(await r.json());
-        const j = JSON.parse(raw); m = (j.error && j.error.message) || (Array.isArray(j) && j[0] && j[0].error && j[0].error.message) || "";
-      } catch (e) {}
-      if (!m && raw) m = String(raw).replace(/\s+/g, " ").slice(0, 120);
-      const err = new Error(r.status + (m ? " " + m.slice(0, 160) : "") + " [" + base(c).replace(/^https?:\/\//, "").slice(0, 60) + " / " + body.model + "]"); err.status = r.status; throw err;
-    }
-    return r.json();
+    let m = "";
+    try { const j = JSON.parse(raw); m = (j.error && j.error.message) || (Array.isArray(j) && j[0] && j[0].error && j[0].error.message) || ""; } catch (e) {}
+    if (!m && raw) m = String(raw).replace(/\s+/g, " ").slice(0, 120);
+    const err = new Error(r.status + (m ? " " + m.slice(0, 160) : "") + " [" + base(c).replace(/^https?:\/\//, "").slice(0, 60) + " / " + tried.join(" → ") + "]");
+    err.status = r.status; throw err;
   }
 
   async function attempt(c, text, o) {
-    const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 7000);
+    const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 15000);
     try {
       const body = {
         model: c.model, temperature: 0, max_tokens: 700,
@@ -201,7 +214,7 @@ La citation doit exister telle quelle dans le passage. Langue des passages : ${L
     const user = "Phrase de l'utilisateur : " + text + "\n\nPassages :\n" + passages.map((x, i) => (i + 1) + ". " + x.text.slice(0, 700)).join("\n");
     const errs = [];
     for (const c of [Ia.cfg, Ia.cfg2].filter(Boolean)) {
-      const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 9000);
+      const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 15000);
       try {
         const body = { model: c.model, temperature: 0, max_tokens: 700,
           messages: [{ role: "system", content: answerPrompt(o.lang, o.subject) }, { role: "user", content: user }],
@@ -250,7 +263,7 @@ Si tu n'es pas sûr, dis-le dans "risposta" et mets "altro". N'invente jamais un
     if (!Ia.ready()) return null;
     const errs = [];
     for (const c of [Ia.cfg, Ia.cfg2].filter(Boolean)) {
-      const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 12000);
+      const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 20000);
       try {
         const body = { model: c.model, temperature: 0, max_tokens: 800,
           messages: [{ role: "system", content: freePrompt(o.subject) }, { role: "user", content: text }],
@@ -280,7 +293,7 @@ Si tu n'es pas sûr, dis-le dans "risposta" et mets "altro". N'invente jamais un
     const nm = c.label || c.model;
     try {
       await call(c, { model: c.model, max_tokens: 5, messages: [{ role: "user", content: "OK ?" }] }, ctrl.signal);
-      return { ok: true, msg: nm + " : connexion réussie." };
+      return { ok: true, msg: nm + " : connexion réussie (modèle " + c.model + ")." };
     } catch (e) {
       let hint = "";
       try {

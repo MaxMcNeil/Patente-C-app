@@ -20,8 +20,13 @@
 
   const GAP = "[…]"; // mot illisible laissé par l'OCR : on ne conclut jamais sur un passage qui en contient
   const digits = s => s.replace(/[٠-٩]/g, d => "٠١٢٣٤٥٦٧٨٩".indexOf(d));
-  const norm = s => digits(String(s)).toLowerCase().normalize("NFD").replace(/\p{M}/gu, "")
-    .replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+  /* chemin rapide (texte latin/arabe courant) ; chemin complet pour les autres alphabets */
+  const NOT_FAST = /[^\u0000-\u007f\u0621-\u064a\u066e-\u06d3«»’‘“”–—…\u00a0°]/;
+  const norm = s => {
+    let t = digits(String(s)).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    t = NOT_FAST.test(t) ? t.replace(/\p{M}/gu, "").replace(/[^\p{L}\p{N}\s]/gu, " ") : t.replace(/[^a-z0-9\u0621-\u064a\u066e-\u06d3\s]/g, " ");
+    return t.replace(/\s+/g, " ").trim();
+  };
   const isNum = w => /^\d+$/.test(w);
   const stem = w => (isNum(w) ? w : w.length > 5 ? w.slice(0, 5) : w);
   const toks = s => norm(s).split(" ").filter(w => w && (isNum(w) || (w.length > 1 && !STOP.has(w)))).map(stem);
@@ -53,18 +58,32 @@
   };
 
   /* ---------- index BM25 ---------- */
-  function buildIndex(chunks, sources) {
-    // un contenu périmé (« obsolète ») ne sert jamais à répondre
-    chunks = chunks.filter(c => !(sources && sources[c.s] && sources[c.s].statut === "obsolète"));
-    const docs = chunks.map(c => {
-      const t = toks(c.t), tf = new Map();
-      t.forEach(w => tf.set(w, (tf.get(w) || 0) + 1));
-      return { c, tf, len: t.length, set: new Set(t) };
-    });
+  const keepChunk = (c, sources) => !(sources && sources[c.s] && sources[c.s].statut === "obsolète");
+  const makeDoc = c => {
+    const t = toks(c.t), tf = new Map();
+    t.forEach(w => tf.set(w, (tf.get(w) || 0) + 1));
+    return { c, tf, len: t.length, set: new Set(t) };
+  };
+  const finishIndex = (docs, sources) => {
     const df = new Map();
     docs.forEach(d => d.tf.forEach((_, w) => df.set(w, (df.get(w) || 0) + 1)));
     const N = docs.length;
     return { docs, df, N, avg: docs.reduce((a, d) => a + d.len, 0) / Math.max(1, N), sources: sources || {} };
+  }
+  function buildIndex(chunks, sources) {
+    // un contenu périmé (« obsolète ») ne sert jamais à répondre
+    return finishIndex(chunks.filter(c => keepChunk(c, sources)).map(makeDoc), sources);
+  }
+  /* même index, construit par petites tranches : l'écran reste utilisable pendant le calcul (téléphones lents) */
+  async function buildIndexAsync(chunks, sources, slice = 150) {
+    const yieldNow = () => new Promise(r => setTimeout(r, 0));
+    const docs = [];
+    for (const c of chunks) {
+      if (!keepChunk(c, sources)) continue;
+      docs.push(makeDoc(c));
+      if (docs.length % slice === 0) await yieldNow();
+    }
+    return finishIndex(docs, sources);
   }
 
   function bm25(idx, qt, d) {
@@ -335,7 +354,7 @@
   }
 
   const windowTexts = t => windows(t).map(x => x.w);
-  const api = { passageOf: (idx, r, sentence) => passage(idx, r, sentence), norm, toks, buildIndex, search, parseMcq, answerMcq, answerYN, answer, sentences, resolveVotes, windowTexts, stmtOf, answerMulti, numsOf, hasNeg };
+  const api = { passageOf: (idx, r, sentence) => passage(idx, r, sentence), norm, toks, buildIndex, buildIndexAsync, search, parseMcq, answerMcq, answerYN, answer, sentences, resolveVotes, windowTexts, stmtOf, answerMulti, numsOf, hasNeg };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Engine = api;
 })(typeof self !== "undefined" ? self : this);

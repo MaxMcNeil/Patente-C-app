@@ -64,6 +64,10 @@ Bouton « Mode conversation mains libres » : tu poses ta question à voix haute
 
 **L'IA répond seule** (case cochée par défaut avec l'IA) : ta question est envoyée à Gemini, sinon à Groq, qui répond avec ses propres connaissances, en italien, et l'appli la lit à voix haute. Sa réponse est prioritaire et marquée « Réponse de l'IA, non vérifiée dans ta base ». Si ta base dit autre chose, une note l'indique à l'écrit, sans être lue. Si les deux fournisseurs sont en panne ou sans quota, l'appli répond avec ta base. Décoche la case pour revenir à une réponse 100 % tirée de ta base.
 
+**Choix automatique du modèle** : l'appli lit la liste des modèles que ta clé peut utiliser, ne garde que les modèles de texte (jamais voix, image, garde-fou), les classe du plus récent au moins utile et essaie jusqu'à 5 modèles. Un modèle retiré (404), en quota (429) ou refusé est sauté ; si tous échouent, elle passe au fournisseur de secours, puis à ta base. Le modèle qui marche est retenu. « Tester les clés » indique lequel.
+
+**Téléphones lents** : l'index de recherche se calcule par petites tranches (l'écran ne gèle plus) et une seule fois par version de la base. Mode sans échec : ajoute `?safe=1` à l'adresse. Bouton « Réparer l'appli » dans Réglages.
+
 ## Comment poser les questions
 - **Vrai/faux** : dis l'affirmation. « Le conducteur doit avoir 21 ans pour la patente C. »
 - **QCM** : dis la question, puis « A … B … C … ». La reconnaissance vocale lit parfois mal les lettres : tu peux aussi écrire.
