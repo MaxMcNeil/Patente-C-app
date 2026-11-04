@@ -12,7 +12,14 @@
   };
   const Ia = { PRESETS, cfg: null, cfg2: null, cache: new Map(), last: "" };
 
-  const okCfg = c => (c && c.key && c.url && c.model ? c : null);
+  /* adresses connues : on remet la bonne, quoi qu'il y ait dans le champ (faute de frappe, ancienne valeur, « /chat/completions » en trop…) */
+  const fixUrl = u => {
+    u = String(u || "").trim();
+    if (/generativelanguage\.googleapis\.com/i.test(u)) return PRESETS.gemini.url;
+    if (/api\.groq\.com/i.test(u)) return PRESETS.groq.url;
+    return u.replace(/\/chat\/completions\/?$/i, "");
+  };
+  const okCfg = c => (c && c.key && c.url && c.model ? Object.assign({}, c, { url: fixUrl(c.url), key: String(c.key).trim(), model: String(c.model).trim() }) : null);
   /* c = fournisseur principal, c2 = secours (facultatif) : on passe au secours si le principal échoue (quota, panne, délai) */
   Ia.configure = (c, c2) => { Ia.cfg = okCfg(c); Ia.cfg2 = okCfg(c2); if (!Ia.cfg && Ia.cfg2) { Ia.cfg = Ia.cfg2; Ia.cfg2 = null; } };
   Ia.ready = () => !!Ia.cfg;
@@ -83,8 +90,10 @@ Réponds uniquement par un objet JSON :
       }
     }
     if (!r.ok) {
-      let m = ""; try { m = (await r.json()).error.message || ""; } catch (e) {}
-      const err = new Error(r.status + (m ? " " + m.slice(0, 160) : "")); err.status = r.status; throw err;
+      let m = ""; let raw = "";
+      try { raw = typeof r.text === "function" ? await r.text() : JSON.stringify(await r.json()); const j = JSON.parse(raw); m = (j.error && j.error.message) || (Array.isArray(j) && j[0] && j[0].error && j[0].error.message) || ""; } catch (e) {}
+      if (!m && raw) m = raw.replace(/\s+/g, " ").slice(0, 120);
+      const err = new Error(r.status + (m ? " " + m.slice(0, 160) : "") + " [" + base(c).replace(/^https?:\/\//, "").slice(0, 60) + " / " + body.model + "]"); err.status = r.status; throw err;
     }
     return r.json();
   }
