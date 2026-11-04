@@ -1,4 +1,4 @@
-# Patente C — Quiz vocal (appli publique)
+# Patente C CQC (Italie) — Quiz vocal (appli publique)
 
 Pose une question à voix haute (ou écris-la). L'appli répond **Vrai/Faux** (Oui/Non) pour une affirmation, ou
 **donne la bonne lettre** pour un QCM, en s'appuyant sur ta base de connaissances, et cite toujours la source.
@@ -67,7 +67,7 @@ Les offres gratuites ont des limites de requêtes qui peuvent changer sans préa
   « je ne peux pas trancher » et montre les passages les plus proches.
 - Elle compare des mots et des chiffres, elle ne « comprend » pas : une affirmation formulée très différemment
   du cours, ou avec un piège de sens, peut échapper à la détection. Lis toujours le passage cité.
-- Les quiz viennent de ta base privée. `quiz/quiz.json` n'est qu'une démo, affichée tant qu'aucune base n'est configurée.
+- Les quiz viennent de ta base privée (réponse exacte uniquement si les **chiffres et la négation** de ta phrase sont identiques à ceux de la question : sinon l'appli n'applique pas la réponse d'une phrase voisine). `quiz/quiz.json` n'est qu'une démo, affichée tant qu'aucune base n'est configurée.
 
 ## Contenus locaux (facultatif)
 « Charger mes fichiers » ajoute des `.json` (format `quiz/quiz.json`) ou des `.txt` / `.md` (cours) qui restent sur le téléphone.

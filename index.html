@@ -189,7 +189,13 @@ function best(heard){
   const ut=[...new Set(Engine.toks(heard))];
   if(!ut.length)return null;
   let top=null,sc=0;
+  const same=(a,b)=>a.length===b.length&&a.every(x=>b.includes(x));
   for(const q of Q){
+    if(q.conflit||q.remplace)continue; // réponses contradictoires selon les pages : à trancher dans errors-to-fix.md
+    // un chiffre ou une négation différent = une autre affirmation : on ne reprend jamais la réponse de la voisine
+    const base=q.type==="qcm"?[q.question,...(q.choix||[])].join(" "):q.question;
+    if(!same(Engine.numsOf(heard),Engine.numsOf(base)))continue;
+    if(q.type!=="qcm"&&Engine.hasNeg(heard)!==Engine.hasNeg(q.question))continue;
     const qt=new Set(Engine.toks([q.question,...(q.choix||[]),...(q.mots_cles||[])].join(" ")));
     const hits=ut.filter(w=>qt.has(w)).length;
     const s=0.6*hits/ut.length+0.4*hits/Math.max(1,qt.size);

@@ -27,9 +27,10 @@
   const toks = s => norm(s).split(" ").filter(w => w && (isNum(w) || (w.length > 1 && !STOP.has(w)))).map(stem);
   const numsOf = s => (digits(String(s)).match(/\d+(?:[.,]\d+)?/g) || []).map(x => x.replace(",", "."));
   const hasNeg = s => norm(s).split(" ").some(w => NEG.has(w));
+  const ABBR = /\b(art|artt|n|nr|pag|pagg|cap|lett|fig|tab|comma)\.(?=\s*\d)/gi;
   const sentences = t => {
-    const safe = String(t).split(GAP).join("\u0001"); // « […] » ne doit pas couper la phrase
-    return (safe.match(/[^.!?؟…]+(?:[.!?؟…]+|$)/g) || [safe]).map(x => x.split("\u0001").join(GAP).trim()).filter(Boolean);
+    const safe = String(t).split(GAP).join("\u0001").replace(ABBR, (m, a) => a + "\u0002"); // « […] » et « Art. 88 » ne coupent pas la phrase
+    return (safe.match(/[^.!?؟…]+(?:[.!?؟…]+|$)/g) || [safe]).map(x => x.split("\u0001").join(GAP).split("\u0002").join(".").trim()).filter(Boolean);
   };
   const cover = (qt, set) => {
     const u = [...new Set(qt)];
@@ -53,6 +54,8 @@
 
   /* ---------- index BM25 ---------- */
   function buildIndex(chunks, sources) {
+    // un contenu périmé (« obsolète ») ne sert jamais à répondre
+    chunks = chunks.filter(c => !(sources && sources[c.s] && sources[c.s].statut === "obsolète"));
     const docs = chunks.map(c => {
       const t = toks(c.t), tf = new Map();
       t.forEach(w => tf.set(w, (tf.get(w) || 0) + 1));
