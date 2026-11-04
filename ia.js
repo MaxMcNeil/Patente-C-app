@@ -10,9 +10,11 @@
     gemini: { label: "Google AI Studio (Gemini)", url: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-2.5-flash" },
     groq: { label: "Groq", url: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" }
   };
-  const Ia = { PRESETS, cfg: null, cache: new Map(), last: "" };
+  const Ia = { PRESETS, cfg: null, cfg2: null, cache: new Map(), last: "" };
 
-  Ia.configure = c => { Ia.cfg = c && c.key && c.url && c.model ? c : null; };
+  const okCfg = c => (c && c.key && c.url && c.model ? c : null);
+  /* c = fournisseur principal, c2 = secours (facultatif) : on passe au secours si le principal échoue (quota, panne, délai) */
+  Ia.configure = (c, c2) => { Ia.cfg = okCfg(c); Ia.cfg2 = okCfg(c2); if (!Ia.cfg && Ia.cfg2) { Ia.cfg = Ia.cfg2; Ia.cfg2 = null; } };
   Ia.ready = () => !!Ia.cfg;
 
   const LANGNAME = { it: "italien", fr: "français", en: "anglais", ar: "arabe" };
@@ -52,8 +54,7 @@ Réponds uniquement par un objet JSON :
     try { return JSON.parse(m[0]); } catch (e) { return null; }
   };
 
-  async function call(body, signal) {
-    const c = Ia.cfg;
+  async function call(c, body, signal) {
     const r = await fetch(c.url.replace(/\/$/, "") + "/chat/completions", {
       method: "POST", signal,
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + c.key },
@@ -67,58 +68,72 @@ Réponds uniquement par un objet JSON :
   }
 
   /* -> { variants: [textes à essayer après l'original], kind, qcm } ou null (jamais d'exception) */
-  Ia.understand = async function (text, o = {}) {
-    if (!Ia.ready()) return null;
-    const key = (o.lang || "") + "|" + text;
-    if (Ia.cache.has(key)) return Ia.cache.get(key);
-    const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 9000);
+  async function attempt(c, text, o) {
+    const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 7000);
     try {
       const body = {
-        model: Ia.cfg.model, temperature: 0, max_tokens: 400,
+        model: c.model, temperature: 0, max_tokens: 400,
         messages: [{ role: "system", content: systemPrompt(o.lang, o.subject) }, { role: "user", content: text }],
         response_format: { type: "json_object" }
       };
       let data;
-      try { data = await call(body, ctrl.signal); }
-      catch (e) { if (e.status !== 400) throw e; delete body.response_format; data = await call(body, ctrl.signal); }
+      try { data = await call(c, body, ctrl.signal); }
+      catch (e) { if (e.status !== 400) throw e; delete body.response_format; data = await call(c, body, ctrl.signal); }
       const j = parseJson(data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content);
       if (!j) throw new Error("réponse illisible");
-      const out = { variants: [], kind: j.genre || "autre", rejected: 0 };
-      for (const r of (Array.isArray(j.reformulations) ? j.reformulations : []).slice(0, 3)) {
-        if (Ia.guard(text, r)) out.variants.push(r.trim()); else out.rejected++;
-      }
-      const Eng = E();
-      if (j.qcm && Ia.guardMcq(text, Eng.parseMcq(text), j.qcm)) {
-        const L = "ABCDEF";
-        out.variants.push(String(j.qcm.question || "").trim() + " " + j.qcm.options.map((x, i) => L[i] + " " + x.trim()).join(" "));
-      } else if (j.qcm) out.rejected++;
-      Ia.cache.set(key, out);
-      Ia.last = "";
-      return out;
-    } catch (e) {
-      Ia.last = e.name === "AbortError" ? "délai dépassé" : e.message;
-      return null;
+      return j;
     } finally { clearTimeout(timer); }
+  }
+
+  /* -> { variants: [textes à essayer après l'original], kind, qcm, via } ou null (jamais d'exception) */
+  Ia.understand = async function (text, o = {}) {
+    if (!Ia.ready()) return null;
+    const key = (o.lang || "") + "|" + text;
+    if (Ia.cache.has(key)) return Ia.cache.get(key);
+    const errs = []; let j = null, used = null;
+    for (const c of [Ia.cfg, Ia.cfg2].filter(Boolean)) {
+      try { j = await attempt(c, text, o); used = c; break; }
+      catch (e) { errs.push((c.label || c.model) + " : " + (e.name === "AbortError" ? "délai dépassé" : e.message)); }
+    }
+    if (!j) { Ia.last = errs.join(" ; "); return null; }
+    const out = { variants: [], kind: j.genre || "autre", rejected: 0, via: used.label || used.model };
+    for (const r of (Array.isArray(j.reformulations) ? j.reformulations : []).slice(0, 3)) {
+      if (Ia.guard(text, r)) out.variants.push(r.trim()); else out.rejected++;
+    }
+    const Eng = E();
+    if (j.qcm && Ia.guardMcq(text, Eng.parseMcq(text), j.qcm)) {
+      const L = "ABCDEF";
+      out.variants.push(String(j.qcm.question || "").trim() + " " + j.qcm.options.map((x, i) => L[i] + " " + x.trim()).join(" "));
+    } else if (j.qcm) out.rejected++;
+    Ia.cache.set(key, out);
+    Ia.last = errs.length ? "secours utilisé (" + errs[0] + ")" : "";
+    return out;
   };
 
-  /* test de la clé : un petit appel ; en cas d'échec, liste de modèles proposés */
-  Ia.test = async function () {
-    if (!Ia.ready()) return { ok: false, msg: "Renseigne la clé, l'adresse et le modèle." };
+  async function testOne(c) {
     const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 12000);
+    const nm = c.label || c.model;
     try {
-      await call({ model: Ia.cfg.model, max_tokens: 5, messages: [{ role: "user", content: "OK ?" }] }, ctrl.signal);
-      return { ok: true, msg: "Connexion réussie." };
+      await call(c, { model: c.model, max_tokens: 5, messages: [{ role: "user", content: "OK ?" }] }, ctrl.signal);
+      return { ok: true, msg: nm + " : connexion réussie." };
     } catch (e) {
       let hint = "";
       try {
-        const r = await fetch(Ia.cfg.url.replace(/\/$/, "") + "/models", { headers: { Authorization: "Bearer " + Ia.cfg.key }, signal: ctrl.signal });
+        const r = await fetch(c.url.replace(/\/$/, "") + "/models", { headers: { Authorization: "Bearer " + c.key }, signal: ctrl.signal });
         if (r.ok) {
           const ids = ((await r.json()).data || []).map(x => String(x.id || "").replace(/^models\//, "")).filter(Boolean);
           if (ids.length) hint = " Modèles proposés : " + ids.slice(0, 8).join(", ") + ".";
         }
       } catch (x) {}
-      return { ok: false, msg: "Échec : " + (e.name === "AbortError" ? "délai dépassé" : e.message) + "." + hint };
+      return { ok: false, msg: nm + " : échec : " + (e.name === "AbortError" ? "délai dépassé" : e.message) + "." + hint };
     } finally { clearTimeout(timer); }
+  }
+  /* test de chaque clé renseignée (principale puis secours) */
+  Ia.test = async function () {
+    if (!Ia.ready()) return { ok: false, msg: "Renseigne la clé, l'adresse et le modèle." };
+    const rs = [];
+    for (const c of [Ia.cfg, Ia.cfg2].filter(Boolean)) rs.push(await testOne(c));
+    return { ok: rs.every(r => r.ok), msg: rs.map(r => r.msg).join(" — ") };
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = Ia; else root.Ia = Ia;

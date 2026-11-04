@@ -102,7 +102,10 @@
         const lex = cover(qt, new Set(toks(w))), sv = sem ? semCv(sem, w) : 0;
         const cv = Math.max(lex, sv), c = sv ? semCos(sem, sem.qv, w) : 0;
         // à égalité de seuil, la phrase la plus proche par le sens gagne (évite d'importer la négation d'une phrase voisine)
-        if (cv + 0.001 * c > best.cv + 0.001 * best.c + 1e-9) best = { w, cv, c, viaSens: sv > lex };
+        const sc = cv + 0.001 * c, bs = best.cv + 0.001 * best.c;
+        // à égalité parfaite, le texte le plus court gagne : la phrase seule plutôt que la phrase + sa voisine
+        if (sc > bs + 1e-9 || (Math.abs(sc - bs) <= 1e-9 && cv > 0 && w.length < best.w.length))
+          best = { w, cv, c, viaSens: sv > lex };
       }
     }
     return best;
@@ -247,7 +250,7 @@
   }
 
   /* ---------- vrai / faux ---------- */
-  function judgeYN(stmt, w, cv) {
+  function judgeYN(stmt, w, cv, qt) {
     if (w.includes(GAP)) return { v: "unsure", reason: "gap" };
     if (cv < 0.6) return { v: "unsure", reason: "weak" };
     const nS = numsOf(stmt), nC = numsOf(w);
@@ -255,6 +258,14 @@
       return nC.length ? { v: "no", reason: "number", conf: "haute", sourceNums: nC } : { v: "unsure", reason: "number-missing" };
     }
     if (cv >= 0.75) {
+      if (qt && hasNeg(stmt) !== hasNeg(w)) {
+        // la négation vient-elle d'une phrase voisine, sans rapport avec l'affirmation ? alors on ne conclut pas
+        const parts = sentences(w);
+        if (parts.length > 1) {
+          const core = parts.filter(x => cover(qt, new Set(toks(x))) >= 0.6);
+          if (core.length && core.every(x => hasNeg(x) === hasNeg(stmt))) return { v: "unsure", reason: "neighbor-negation" };
+        }
+      }
       return hasNeg(stmt) !== hasNeg(w) ? { v: "no", reason: "negation", conf: "moyenne" }
                                         : { v: "yes", conf: cv >= 0.9 ? "haute" : "moyenne" };
     }
@@ -277,7 +288,7 @@
       if (!per.has(g) || v > per.get(g).v) per.set(g, { v, cv: w.cv, w: w.w, r, viaSens: w.viaSens });
     }
     const js = [...per.values()].sort((a, b) => b.v - a.v).map(c => {
-      const p = passage(idx, c.r, c.w), j = judgeYN(stmt, c.w, c.cv);
+      const p = passage(idx, c.r, c.w), j = judgeYN(stmt, c.w, c.cv, qt);
       return { k: j.v, rank: p.rank, v: c.v, p, j, viaSens: c.viaSens };
     });
     const alts = top.slice(0, 2).map(r => passage(idx, r));

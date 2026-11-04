@@ -51,6 +51,8 @@ summary{cursor:pointer;font-weight:600}
   </div>
 
   <button id="mic" type="button">Poser une question</button>
+  <button id="conv" type="button" class="btn" style="align-self:center">Mode conversation mains libres</button>
+  <p class="sub" id="convmsg" aria-live="polite" style="text-align:center"></p>
   <form id="f">
     <textarea id="txt" rows="2" placeholder="ou écris ta question (QCM : … A … B … C …)" aria-label="Question"></textarea>
     <button>Demander</button>
@@ -85,7 +87,9 @@ summary{cursor:pointer;font-weight:600}
       <input id="iaModel" autocapitalize="off" autocomplete="off">
       <label for="iaUrl">Adresse de l'API</label>
       <input id="iaUrl" autocapitalize="off" autocomplete="off">
-      <div><button type="button" id="iaTest" class="btn">Tester la clé</button></div>
+      <label for="iaKey2">Clé de secours (facultatif) : l'autre fournisseur, utilisé si le premier est en panne ou sans quota</label>
+      <input id="iaKey2" type="password" autocomplete="off">
+      <div><button type="button" id="iaTest" class="btn">Tester les clés</button></div>
       <p class="sub" id="iamsg"></p>
       <label class="chk"><input type="checkbox" id="strict"> Mode strict : ne conclure qu'avec des sources officielles ou vérifiées</label>
     </div>
@@ -178,10 +182,17 @@ const dget=async k=>{try{const db=await DB();return await new Promise(res=>{cons
 const dset=async(k,v)=>{try{const db=await DB();return await new Promise(res=>{const t=db.transaction("d","readwrite");t.objectStore("d").put(v,k);t.oncomplete=()=>res();t.onerror=()=>res()})}catch(e){}};
 const kbKey=()=>"kb:"+(CFG.active||"demo"),mineKey=()=>"mine:"+(CFG.active||"demo");
 
+let LASTSAY=Promise.resolve();
 function say(t){
-  if(!window.speechSynthesis||!t)return;
-  speechSynthesis.cancel();
-  const u=new SpeechSynthesisUtterance(t);u.lang=LOC[lang()];speechSynthesis.speak(u);
+  LASTSAY=new Promise(res=>{
+    if(!window.speechSynthesis||!t)return res();
+    speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(t);u.lang=LOC[lang()];
+    let done=false;const fin=()=>{if(!done){done=true;res()}};
+    u.onend=fin;u.onerror=fin;setTimeout(fin,45000);   // filet de sécurité : la boucle ne reste jamais bloquée
+    speechSynthesis.speak(u);
+  });
+  return LASTSAY;
 }
 
 /* ---------- questions de quiz : correspondance stricte ---------- */
@@ -344,6 +355,67 @@ $("mic").onclick=()=>{
 $("f").onsubmit=e=>{e.preventDefault();ask($("txt").value)};
 $("txt").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ask($("txt").value)}});
 
+/* ---------- mode conversation mains libres ----------
+   L'appli écoute, répond à voix haute, puis se remet à écouter. « stop » (ou basta, fine…) l'arrête.
+   Limite du web : Chrome coupe le micro quand l'écran se verrouille. On garde l'écran allumé (Wake Lock)
+   et la boucle reprend toute seule au retour de l'appli. */
+let CONV=false,WL=null;
+const STOPW=/^\W*(stop|basta|ferma|fermati|fermo|termina|esci|fine|smetti|chiudi|arrête|arrete)\b/i;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const setConv=m=>{$("convmsg").textContent=m};
+async function wakeLock(on){
+  try{
+    if(on&&"wakeLock" in navigator){WL=await navigator.wakeLock.request("screen");WL.addEventListener("release",()=>{WL=null})}
+    else if(!on&&WL){await WL.release();WL=null}
+  }catch(e){}
+}
+document.addEventListener("visibilitychange",()=>{if(CONV&&!document.hidden&&!WL)wakeLock(true)});
+function waitVisible(){return new Promise(res=>{const f=()=>{if(!document.hidden||!CONV){document.removeEventListener("visibilitychange",f);res()}};document.addEventListener("visibilitychange",f)})}
+let REC=null,RECERR="";
+function listenOnce(){
+  return new Promise(res=>{
+    let got=null;RECERR="";
+    let r;try{r=new SR()}catch(e){RECERR="unsupported";return res(null)}
+    REC=r;r.lang=LOC[lang()];r.interimResults=false;r.maxAlternatives=1;
+    r.onresult=e=>{got=e.results[0][0].transcript};
+    r.onerror=e=>{RECERR=e.error};
+    r.onend=()=>{REC=null;res(got)};
+    try{r.start()}catch(e){RECERR="start";res(null)}
+  });
+}
+async function convLoop(){
+  let errs=0;
+  while(CONV){
+    if(document.hidden){setConv("En pause : écran verrouillé ou appli en arrière-plan. Reviens sur l'appli pour reprendre.");await waitVisible();continue}
+    setConv("Je t'écoute… (dis « stop » pour arrêter)");
+    const t0=Date.now(),heard=await listenOnce();
+    if(!CONV)break;
+    if(RECERR==="not-allowed"||RECERR==="service-not-allowed"){setConv("Micro refusé : autorise-le dans Chrome (cadenas de la barre d'adresse).");return stopConv(true)}
+    if(RECERR==="network"){if(++errs>=5){setConv("Reconnaissance vocale indisponible (réseau). Mode arrêté.");return stopConv(true)}setConv("Réseau instable, nouvel essai…");await sleep(2500);continue}
+    if(heard===null){if(Date.now()-t0<900)await sleep(900);continue}   // silence : on réécoute
+    errs=0;
+    const said=heard.trim();
+    if(STOPW.test(said)){await say(lang()==="it"?"Va bene, mi fermo.":"D'accord, j'arrête.");return stopConv(true)}
+    $("txt").value=said;setConv("Je cherche la réponse…");
+    await ask(said);await LASTSAY;await sleep(600);       // on attend la fin de la réponse parlée avant de réécouter
+  }
+}
+function stopConv(silent){
+  CONV=false;try{if(REC)REC.abort()}catch(e){}
+  if(window.speechSynthesis)speechSynthesis.cancel();
+  wakeLock(false);$("conv").textContent="Mode conversation mains libres";
+  if(!silent)setConv("");else if(!$("convmsg").textContent.startsWith("Micro")&&!$("convmsg").textContent.includes("indisponible"))setConv("Mode conversation arrêté.");
+}
+$("conv").onclick=()=>{
+  if(CONV)return stopConv(false);
+  if(!SR){$("note").hidden=false;return}
+  // la conversation se fait dans la langue de la base (italien pour la patente)
+  const L=(KB.meta&&KB.meta.langue)||"it";
+  if(LOC[L]){$("lang").value=L;const a=active();if(a){a.lang=L;saveCfg()}}
+  CONV=true;$("conv").textContent="Arrêter la conversation";
+  wakeLock(true);convLoop();
+};
+
 /* ---------- bases (une par matière, isolées) ---------- */
 function fillFields(){
   const a=active()||{};
@@ -370,11 +442,12 @@ $("lang").onchange=()=>{const a=active();if(a){a.lang=lang();saveCfg()}};
 $("strict").onchange=()=>{CFG.strict=$("strict").checked;saveCfg()};
 const IAURL={gemini:"https://generativelanguage.googleapis.com/v1beta/openai",groq:"https://api.groq.com/openai/v1"};
 function iaCfg(){CFG.ia=CFG.ia||{on:false,provider:"gemini",url:IAURL.gemini,model:"gemini-2.5-flash",key:""};return CFG.ia}
-function iaApply(){const c=iaCfg();if(window.Ia)Ia.configure(c.on||c.key?{url:c.url,model:c.model,key:c.key}:null)}
-function iaFill(){const c=iaCfg();$("ia").checked=!!c.on;$("iaProv").value=c.provider;$("iaKey").value=c.key;$("iaModel").value=c.model;$("iaUrl").value=c.url;iaApply()}
+function iaBackup(){const c=iaCfg(),o=c.provider==="groq"?"gemini":"groq",P=window.Ia&&Ia.PRESETS[o];return c.key2&&P?{url:P.url,model:P.model,key:c.key2,label:P.label}:null}
+function iaApply(){const c=iaCfg();if(window.Ia)Ia.configure(c.on||c.key?{url:c.url,model:c.model,key:c.key,label:(Ia.PRESETS[c.provider]||{}).label}:null,iaBackup())}
+function iaFill(){const c=iaCfg();$("ia").checked=!!c.on;$("iaProv").value=c.provider;$("iaKey").value=c.key;$("iaKey2").value=c.key2||"";$("iaModel").value=c.model;$("iaUrl").value=c.url;iaApply()}
 $("ia").onchange=()=>{iaCfg().on=$("ia").checked;saveCfg();iaApply()};
 $("iaProv").onchange=()=>{const c=iaCfg(),p=$("iaProv").value;c.provider=p;if(Ia.PRESETS[p]){c.url=Ia.PRESETS[p].url;c.model=Ia.PRESETS[p].model}saveCfg();iaFill()};
-for(const [id,k] of [["iaKey","key"],["iaModel","model"],["iaUrl","url"]])$(id).onchange=()=>{iaCfg()[k]=$(id).value.trim();saveCfg();iaApply()};
+for(const [id,k] of [["iaKey","key"],["iaKey2","key2"],["iaModel","model"],["iaUrl","url"]])$(id).onchange=()=>{iaCfg()[k]=$(id).value.trim();saveCfg();iaApply()};
 $("iaTest").onclick=async()=>{const m=$("iamsg");m.textContent="Test…";iaApply();const r=await Ia.test();m.textContent=r.msg};
 const semT=()=>{const v=parseFloat(CFG.semT||localStorage.getItem("qv_semT"));return v>=0.6&&v<=0.95?v:0.78};
 $("sem").onchange=()=>{CFG.sem=$("sem").checked;saveCfg();startSem()};
