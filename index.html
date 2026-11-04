@@ -77,6 +77,7 @@ summary{cursor:pointer;font-weight:600}
       <input id="semT" type="number" min="0.6" max="0.95" step="0.01" inputmode="decimal">
       <p class="sub" id="semmsg"></p>
       <a class="btn" href="test-sens.html">Tester la compréhension du sens</a>
+      <div><button type="button" id="repair" class="btn">Réparer l'appli (vider le cache, garder mes données)</button></div>
       <label class="chk"><input type="checkbox" id="ia"> Utiliser une IA gratuite pour comprendre mes questions</label>
       <p class="sub">Seule ta question est envoyée au fournisseur choisi. Ta base ne quitte jamais le téléphone. L'IA ne répond pas : elle reformule, et l'appli vérifie dans tes sources.</p>
       <label class="chk"><input type="checkbox" id="iaAns" checked> L'IA répond seule avec ses connaissances (prioritaire) ; ma base sert de secours</label>
@@ -347,7 +348,7 @@ async function ask(heard){
   const res=$("res");res.hidden=false;
   const text=applyLexique(heard);
   let variants=[{text}],note="";
-  const iaOn=!!(CFG.ia&&CFG.ia.on&&window.Ia&&Ia.ready());
+  const iaOn=!SAFE&&!!(CFG.ia&&CFG.ia.on&&window.Ia&&Ia.ready());
   if(iaOn){
     const U=await Ia.understand(text,{lang:(KB.meta&&KB.meta.langue)||lang(),subject:(KB.meta&&KB.meta.nom)||""});
     if(U)U.variants.forEach(v=>variants.push({text:v}));
@@ -491,6 +492,7 @@ async function startSem(){
   const m=$("semmsg");
   if(!CFG.sem||!window.Sem){m.textContent="";return}
   if(SEMBUSY)return;SEMBUSY=true;
+  try{localStorage.setItem("qv_semrun",String(Date.now()))}catch(e){}
   try{
     if(!Sem.ready()){
       m.textContent="Téléchargement du modèle…";
@@ -501,6 +503,7 @@ async function startSem(){
     const r=await Sem.index(CHUNKS,store,(d,n)=>{m.textContent="Lecture du sens des passages : "+d+" / "+n});
     m.textContent="Compréhension du sens active ("+r.total+" morceaux).";
   }catch(e){m.textContent="Sens indisponible : "+e.message+" (l'appli marche quand même, par les mots)."}
+  try{localStorage.removeItem("qv_semrun")}catch(e){}
   SEMBUSY=false;
 }
 
@@ -542,11 +545,25 @@ $("files").onchange=async e=>{
   }
   await dset(mineKey(),MINE);refresh();startSem();
 };
+$("repair").onclick=async()=>{
+  try{const rs=await navigator.serviceWorker.getRegistrations();for(const r of rs)await r.unregister()}catch(e){}
+  try{for(const k of await caches.keys())await caches.delete(k)}catch(e){}
+  location.replace(location.pathname+"?r="+Date.now());
+};
 $("clr").onclick=async()=>{MINE={questions:[],cours:[]};await dset(mineKey(),MINE);refresh()};
 
 /* ---------- démarrage ---------- */
+const SAFE=/[?&]safe=1/.test(location.search);
 (async()=>{
   loadCfg();
+  let crashed=false;
+  try{if(localStorage.getItem("qv_semrun")){crashed=true;localStorage.removeItem("qv_semrun");if(CFG.sem){CFG.sem=false;saveCfg()}}}catch(e){}
+  if(SAFE||crashed){
+    const b=document.createElement("p");b.className="sub";b.style.cssText="background:#ffcc66;color:#222;padding:8px;border-radius:8px";
+    b.textContent=SAFE?"Mode sans échec : le sens et l'IA sont suspendus pour cette ouverture. Ouvre Réglages pour corriger.":"La compréhension du sens avait bloqué l'appli la dernière fois : elle est désactivée. Tu peux la réactiver dans Réglages.";
+    document.body.insertBefore(b,document.body.firstChild);
+  }
+  if(SAFE){CFG.sem=false}
   if(!CFG.bases.length){ // aucune base : démo avec les quelques questions d'exemple
     try{const r=await fetch("quiz/quiz.json");const d=await r.json();DEMO=d.questions||[];if(d.titre)$("titre").textContent=d.titre}catch(e){}
   }
