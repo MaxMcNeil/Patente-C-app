@@ -110,6 +110,129 @@ Réponds uniquement par un objet JSON :
     return out;
   };
 
+
+  /* ---------- l'IA LIT les passages de ta base et répond ; sa réponse est vérifiée avant d'être acceptée ----------
+     Elle doit citer mot pour mot une phrase d'un passage ; chiffres et négations sont recontrôlés ici, pas par elle. */
+  const answerPrompt = (lang, subject) => `Tu aides une application de révision (${subject || "examen"}). Tu réponds UNIQUEMENT à partir des passages numérotés fournis, jamais avec tes connaissances.
+L'utilisateur donne soit une affirmation (réponse "vero" ou "falso"), soit un QCM avec des choix A, B, C (réponse = la lettre).
+Si les passages ne permettent pas de trancher, s'ils se contredisent, ou si la phrase n'est ni une affirmation ni un QCM : réponds "incerto".
+Réponds uniquement par un objet JSON : {"reponse":"vero"|"falso"|"A"|"B"|"C"|"D"|"E"|"F"|"incerto","passage":<numéro>,"citation":"phrase copiée MOT POUR MOT du passage"}
+La citation doit exister telle quelle dans le passage. Langue des passages : ${LANGNAME[lang] || "italien"}.`;
+
+  const overlap = (a, b) => { const B = new Set(b); const A = a.filter(x => x); return A.length ? A.filter(x => B.has(x)).length / A.length : 0; };
+
+  /* -> { verdict: "yes"|"no"|indice|"unsure", p, quote } ou null si la réponse est refusée */
+  Ia.checkAnswer = function (stmt, mcq, j, passages) {
+    const Eng = E();
+    if (!j || typeof j.reponse !== "string") return null;
+    const r = j.reponse.trim().toLowerCase();
+    if (r === "incerto" || r === "") return { verdict: "unsure" };
+    const ps = passages[(parseInt(j.passage, 10) || 0) - 1];
+    if (!ps || typeof j.citation !== "string") return null;
+    const qn = Eng.norm(j.citation);
+    if (qn.length < 15 || !Eng.norm(ps.text).includes(qn)) return null;           // citation inventée ou approximative
+    const qt = Eng.toks(j.citation);
+    if (mcq) {
+      const i = "abcdef".indexOf(r);
+      if (r.length !== 1 || i < 0 || i >= mcq.opts.length) return null;
+      const o = mcq.opts[i];
+      const ot = Eng.toks(o);
+      if (!sameSet(Eng.numsOf(o), Eng.numsOf(j.citation).filter(n => Eng.numsOf(o).includes(n)))) return null; // chiffres de l'option absents de la citation
+      if (overlap(ot, qt) < 0.5) return null;                                      // la citation ne parle pas de l'option choisie
+      return { verdict: i, p: ps.p, quote: j.citation };
+    }
+    const yes = /^(vero|vrai|true|v)$/.test(r), no = /^(falso|faux|false|f)$/.test(r);
+    if (!yes && !no) return null;
+    if (overlap(Eng.toks(stmt), qt) < 0.5) return null;                            // la citation ne concerne pas l'affirmation
+    if (yes) {
+      const sn = Eng.numsOf(stmt), cn = Eng.numsOf(j.citation);
+      if (sn.some(n => !cn.includes(n))) return null;                              // « vero » avec un chiffre absent de la citation
+      if (Eng.hasNeg(stmt) !== Eng.hasNeg(j.citation)) return null;               // « vero » alors que la négation diffère
+    }
+    return { verdict: yes ? "yes" : "no", p: ps.p, quote: j.citation };
+  };
+
+  /* passages = [{ text, p }] ; mcq = résultat de parseMcq ou null -> résultat vérifié ou null (jamais d'exception) */
+  Ia.answer = async function (text, passages, mcq, o = {}) {
+    if (!Ia.ready() || !passages.length) return null;
+    const Eng = E(), stmt = mcq ? mcq.q : Eng.stmtOf(text);
+    const user = "Phrase de l'utilisateur : " + text + "\n\nPassages :\n" + passages.map((x, i) => (i + 1) + ". " + x.text.slice(0, 700)).join("\n");
+    const errs = [];
+    for (const c of [Ia.cfg, Ia.cfg2].filter(Boolean)) {
+      const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 9000);
+      try {
+        const body = { model: c.model, temperature: 0, max_tokens: 300,
+          messages: [{ role: "system", content: answerPrompt(o.lang, o.subject) }, { role: "user", content: user }],
+          response_format: { type: "json_object" } };
+        let data;
+        try { data = await call(c, body, ctrl.signal); }
+        catch (e) { if (e.status !== 400) throw e; delete body.response_format; data = await call(c, body, ctrl.signal); }
+        const j = parseJson(data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content);
+        if (!j) throw new Error("réponse illisible");
+        const v = Ia.checkAnswer(stmt, mcq, j, passages);
+        Ia.lastAns = errs.length ? "secours utilisé" : "";
+        return v ? Object.assign(v, { via: c.label || c.model }) : { verdict: "unsure", refused: true };
+      } catch (e) { errs.push((c.label || c.model) + " : " + (e.name === "AbortError" ? "délai dépassé" : e.message)); }
+      finally { clearTimeout(timer); }
+    }
+    Ia.lastAns = errs.join(" ; ");
+    return null;
+  };
+
+  /* Fusion avec la réponse du moteur. Le moteur garde la main : l'IA ne peut ni casser un désaccord entre sources,
+     ni combler un trou « […] ». Désaccord moteur/IA -> on ne tranche pas. */
+  const OVERRIDABLE = ["weak", "no-source", "empty", "number-missing"];
+  Ia.combine = function (eng, ai, strict) {
+    if (!ai || ai.verdict === "unsure" || !eng) return eng;
+    if (eng.verdict !== "unsure") {
+      if (String(eng.verdict) === String(ai.verdict)) return Object.assign({}, eng, { aiConfirm: ai.via });
+      return { kind: eng.kind, verdict: "unsure", reason: "ai-conflict", options: eng.options,
+        alts: [Object.assign({}, eng.passage, { says: eng.verdict }), Object.assign({}, ai.p, { says: ai.verdict, text: ai.quote })] };
+    }
+    if (!OVERRIDABLE.includes(eng.reason)) return eng;
+    if (strict && (ai.p.rank || 1) < 2) return eng;
+    return { kind: eng.kind, verdict: ai.verdict, conf: "moyenne", reason: "ia", options: eng.options,
+      passage: Object.assign({}, ai.p, { text: ai.quote }), support: [], conflict: [], nSources: 1, alts: [], viaAI: ai.via };
+  };
+
+
+  /* ---------- l'IA répond SEULE, avec ses connaissances (la base ne sert que de secours) ---------- */
+  const freePrompt = (subject) => `Tu es un instructeur expert de l'examen ${subject || "patente C / CQC italienne"} (code de la route et réglementation italiens et européens en vigueur).
+L'utilisateur parle à voix haute, souvent avec des mots à lui ou mal transcrits : comprends le sens. Réponds EN ITALIEN, de façon brève et précise.
+Si c'est une affirmation : "vero" ou "falso". Si c'est un QCM avec des choix A, B, C : la lettre. Sinon : "altro" avec une réponse courte.
+Réponds uniquement par un objet JSON : {"verdetto":"vero"|"falso"|"A"|"B"|"C"|"D"|"E"|"F"|"altro","risposta":"1 à 3 phrases en italien qui donnent la réponse et la raison (chiffres exacts)"}
+Si tu n'es pas sûr, dis-le dans "risposta" et mets "altro". N'invente jamais un chiffre ni un article de loi.`;
+
+  /* -> { v: "yes"|"no"|indice|"other", text, via } ou null (jamais d'exception) */
+  Ia.free = async function (text, mcq, o = {}) {
+    if (!Ia.ready()) return null;
+    const errs = [];
+    for (const c of [Ia.cfg, Ia.cfg2].filter(Boolean)) {
+      const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 12000);
+      try {
+        const body = { model: c.model, temperature: 0, max_tokens: 350,
+          messages: [{ role: "system", content: freePrompt(o.subject) }, { role: "user", content: text }],
+          response_format: { type: "json_object" } };
+        let data;
+        try { data = await call(c, body, ctrl.signal); }
+        catch (e) { if (e.status !== 400) throw e; delete body.response_format; data = await call(c, body, ctrl.signal); }
+        const j = parseJson(data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content);
+        const txt = j && typeof j.risposta === "string" ? j.risposta.trim() : "";
+        if (!j || !txt) throw new Error("réponse illisible");
+        const r = String(j.verdetto || "").trim().toLowerCase();
+        let v = "other";
+        if (/^(vero|true|v)$/.test(r)) v = "yes";
+        else if (/^(falso|false|f)$/.test(r)) v = "no";
+        else if (mcq && /^[a-f]$/.test(r) && "abcdef".indexOf(r) < mcq.opts.length) v = "abcdef".indexOf(r);
+        Ia.lastFree = errs.length ? "secours utilisé" : "";
+        return { v, text: txt.slice(0, 600), via: c.label || c.model };
+      } catch (e) { errs.push((c.label || c.model) + " : " + (e.name === "AbortError" ? "délai dépassé" : e.message)); }
+      finally { clearTimeout(timer); }
+    }
+    Ia.lastFree = errs.join(" ; ");
+    return null;
+  };
+
   async function testOne(c) {
     const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 12000);
     const nm = c.label || c.model;

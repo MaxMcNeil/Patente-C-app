@@ -335,7 +335,7 @@
   }
 
   const windowTexts = t => windows(t).map(x => x.w);
-  const api = { norm, toks, buildIndex, search, parseMcq, answerMcq, answerYN, answer, sentences, resolveVotes, windowTexts, stmtOf, answerMulti, numsOf, hasNeg };
+  const api = { passageOf: (idx, r, sentence) => passage(idx, r, sentence), norm, toks, buildIndex, search, parseMcq, answerMcq, answerYN, answer, sentences, resolveVotes, windowTexts, stmtOf, answerMulti, numsOf, hasNeg };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.Engine = api;
 })(typeof self !== "undefined" ? self : this);

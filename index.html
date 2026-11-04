@@ -79,6 +79,8 @@ summary{cursor:pointer;font-weight:600}
       <a class="btn" href="test-sens.html">Tester la compréhension du sens</a>
       <label class="chk"><input type="checkbox" id="ia"> Utiliser une IA gratuite pour comprendre mes questions</label>
       <p class="sub">Seule ta question est envoyée au fournisseur choisi. Ta base ne quitte jamais le téléphone. L'IA ne répond pas : elle reformule, et l'appli vérifie dans tes sources.</p>
+      <label class="chk"><input type="checkbox" id="iaAns" checked> L'IA répond seule avec ses connaissances (prioritaire) ; ma base sert de secours</label>
+      <p class="sub">Ta question part chez Google (Gemini), sinon chez Groq. Ses réponses ne sont pas vérifiées dans ta base : elles sont marquées « réponse de l'IA ». Si ta base dit autre chose, une note l'indique à l'écrit. Si les deux fournisseurs sont en panne ou sans quota, l'appli répond avec ta base.</p>
       <label for="iaProv">Fournisseur</label>
       <select id="iaProv"><option value="gemini">Google AI Studio (Gemini)</option><option value="groq">Groq</option><option value="autre">Autre (compatible OpenAI)</option></select>
       <label for="iaKey">Clé gratuite du fournisseur (reste sur ce téléphone)</label>
@@ -266,13 +268,28 @@ function showQuiz(heard,q){
   say(spoken);
 }
 
+const AIT={fr:{free:"Réponse de l'IA, non vérifiée dans ta base",diff:"Ta base dit autre chose (à l'écrit seulement) :",conf:"L'IA et l'appli ne sont pas d'accord : je ne tranche pas",only:"Réponse lue par l'IA dans cette source (citation vérifiée) : relis le passage",ok:"Confirmé aussi par l'IA"},
+ it:{free:"Risposta dell'IA, non verificata nella tua base",diff:"La tua base dice altro (solo per iscritto):",conf:"L'IA e l'app non sono d'accordo: non decido",only:"Risposta letta dall'IA in questa fonte (citazione verificata): rileggi il passaggio",ok:"Confermato anche dall'IA"},
+ en:{free:"AI answer, not checked against your base",diff:"Your base says otherwise (written only):",conf:"The AI and the app disagree: I won't decide",only:"Answer read by the AI in this source (quote checked): read the passage",ok:"Also confirmed by the AI"},
+ ar:{free:"إجابة الذكاء الاصطناعي، دون تحقق من قاعدتك",diff:"قاعدتك تقول غير ذلك (كتابةً فقط):",conf:"الذكاء الاصطناعي والتطبيق غير متفقين: لن أحسم",only:"إجابة قرأها الذكاء الاصطناعي في هذا المصدر (الاقتباس تم التحقق منه): أعد قراءة المقطع",ok:"أكده الذكاء الاصطناعي أيضًا"}};
+function showFree(heard,F,base){
+  const t=tr(),res=$("res");
+  let verdict,cls="wa";
+  if(F.v==="yes"){verdict=t.yes;cls="ok"}else if(F.v==="no"){verdict=t.no;cls="ko"}
+  else if(typeof F.v==="number"){verdict=t.ans+" "+L[F.v];cls="ok"}else verdict=t.ans;
+  let body=`<p>${esc(F.text)}</p><p class="sub">${esc(AIT[lang()].free)} (${esc(F.via)})</p>`;
+  if(base&&base.verdict!=="unsure"&&F.v!=="other"&&String(base.verdict)!==String(F.v)&&base.passage)
+    body+=`<div class="warn"><b>${esc(AIT[lang()].diff)}</b>`+quote(base.passage)+`</div>`;
+  res.innerHTML=`<div class="heard">« ${esc(heard)} »</div><div class="verdict ${cls}">${esc(verdict)}</div>${body}`;
+  say((F.v==="other"?"":verdict+". ")+F.text);
+}
 function showKb(heard,a){
   const t=tr(),res=$("res");
   let verdict,cls,spoken,body="";
   if(a.verdict==="unsure"){
     cls="wa";
-    if(a.reason==="conflict"){
-      verdict=t.conflict;
+    if(a.reason==="conflict"||a.reason==="ai-conflict"){
+      verdict=a.reason==="ai-conflict"?AIT[lang()].conf:t.conflict;
       body=a.alts.map(p=>`<p><b>${esc(t.says)} : ${esc(saysLabel(a,p.says))}</b></p>`+quote(p)).join("");
     }else if(a.reason==="reformulation-conflict"){
       verdict=t.rconf;
@@ -302,6 +319,8 @@ function showKb(heard,a){
       body+=`<div class="warn"><b>${esc(t.contra)}</b>`+a.conflict.map(p=>`<p>${esc(saysLabel(a,p.says))}</p>`+quote(p)).join("")+`</div>`;
       spoken+=" "+t.contra;
     }
+    if(a.viaAI)body+=`<p class="sub">${esc(AIT[lang()].only)} (${esc(a.viaAI)})</p>`;
+    if(a.aiConfirm)body+=`<p class="sub">${esc(AIT[lang()].ok)} (${esc(a.aiConfirm)})</p>`;
     if(a.viaIA)body+=`<p class="sub">${esc(t.ia)} : « ${esc(a.understood)} »</p>`;
     if(a.viaSens)body+=`<p class="sub">${esc(t.sens)}</p>`;
     body+=`<p class="sub">${esc(t.conf)} : ${esc(CONF[lang()][a.conf]||a.conf)}</p>`;
@@ -332,12 +351,23 @@ async function ask(heard){
     if(U)U.variants.forEach(v=>variants.push({text:v}));
     else note=tr().iaoff+" ("+Ia.last+")";
   }
+  if(iaOn&&CFG.ia.answer!==false){
+    const mcq=Engine.parseMcq(text);
+    const F=await Ia.free(text,mcq,{subject:(KB.meta&&KB.meta.nom)||""});
+    if(F){
+      let base=null;
+      try{if(IDX&&IDX.N){base=Engine.answerMulti(IDX,variants,{strict:!!CFG.strict})}}catch(e){}
+      return showFree(heard,F,base);
+    }
+    note=tr().iaoff+" ("+Ia.lastFree+")";
+  }
   for(const v of variants){const q=best(v.text);if(q)return showQuiz(heard,q)}
   if(!IDX||!IDX.N){res.innerHTML=`<div class="heard">« ${esc(heard)} »</div><p>${esc(tr().empty)}</p>`;say(tr().empty);return}
   if(CFG.sem&&window.Sem&&Sem.ready()&&Sem.vecs.size){
     for(const v of variants){try{v.sem=await Sem.prepare(IDX,v.text,semT())}catch(e){v.sem=null}}
   }
-  showKb(heard,Engine.answerMulti(IDX,variants,{strict:!!CFG.strict}));
+  let a=Engine.answerMulti(IDX,variants,{strict:!!CFG.strict});
+  showKb(heard,a);
   if(note)res.insertAdjacentHTML("beforeend",`<p class="sub">${esc(note)}</p>`);
 }
 
@@ -444,7 +474,8 @@ const IAURL={gemini:"https://generativelanguage.googleapis.com/v1beta/openai",gr
 function iaCfg(){CFG.ia=CFG.ia||{on:false,provider:"gemini",url:IAURL.gemini,model:"gemini-2.5-flash",key:""};return CFG.ia}
 function iaBackup(){const c=iaCfg(),o=c.provider==="groq"?"gemini":"groq",P=window.Ia&&Ia.PRESETS[o];return c.key2&&P?{url:P.url,model:P.model,key:c.key2,label:P.label}:null}
 function iaApply(){const c=iaCfg();if(window.Ia)Ia.configure(c.on||c.key?{url:c.url,model:c.model,key:c.key,label:(Ia.PRESETS[c.provider]||{}).label}:null,iaBackup())}
-function iaFill(){const c=iaCfg();$("ia").checked=!!c.on;$("iaProv").value=c.provider;$("iaKey").value=c.key;$("iaKey2").value=c.key2||"";$("iaModel").value=c.model;$("iaUrl").value=c.url;iaApply()}
+function iaFill(){const c=iaCfg();$("ia").checked=!!c.on;$("iaAns").checked=c.answer!==false;$("iaProv").value=c.provider;$("iaKey").value=c.key;$("iaKey2").value=c.key2||"";$("iaModel").value=c.model;$("iaUrl").value=c.url;iaApply()}
+$("iaAns").onchange=()=>{iaCfg().answer=$("iaAns").checked;saveCfg()};
 $("ia").onchange=()=>{iaCfg().on=$("ia").checked;saveCfg();iaApply()};
 $("iaProv").onchange=()=>{const c=iaCfg(),p=$("iaProv").value;c.provider=p;if(Ia.PRESETS[p]){c.url=Ia.PRESETS[p].url;c.model=Ia.PRESETS[p].model}saveCfg();iaFill()};
 for(const [id,k] of [["iaKey","key"],["iaKey2","key2"],["iaModel","model"],["iaUrl","url"]])$(id).onchange=()=>{iaCfg()[k]=$(id).value.trim();saveCfg();iaApply()};

@@ -62,6 +62,8 @@ Bouton « Mode conversation mains libres » : tu poses ta question à voix haute
 
 **Clé de secours** : dans Réglages, renseigne la clé du fournisseur principal (Gemini) et, en dessous, celle de l'autre (Groq). Si Gemini est en panne, sans quota ou trop lent, l'appli passe seule sur Groq. « Tester les clés » vérifie les deux.
 
+**L'IA répond seule** (case cochée par défaut avec l'IA) : ta question est envoyée à Gemini, sinon à Groq, qui répond avec ses propres connaissances, en italien, et l'appli la lit à voix haute. Sa réponse est prioritaire et marquée « Réponse de l'IA, non vérifiée dans ta base ». Si ta base dit autre chose, une note l'indique à l'écrit, sans être lue. Si les deux fournisseurs sont en panne ou sans quota, l'appli répond avec ta base. Décoche la case pour revenir à une réponse 100 % tirée de ta base.
+
 ## Comment poser les questions
 - **Vrai/faux** : dis l'affirmation. « Le conducteur doit avoir 21 ans pour la patente C. »
 - **QCM** : dis la question, puis « A … B … C … ». La reconnaissance vocale lit parfois mal les lettres : tu peux aussi écrire.
