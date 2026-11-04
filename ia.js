@@ -7,7 +7,7 @@
   const E = () => (typeof module !== "undefined" && module.exports ? require("./engine.js") : root.Engine);
 
   const PRESETS = {
-    gemini: { label: "Google AI Studio (Gemini)", url: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-2.5-flash" },
+    gemini: { label: "Google AI Studio (Gemini)", url: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-flash-latest" },
     groq: { label: "Groq", url: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" }
   };
   const Ia = { PRESETS, cfg: null, cfg2: null, cache: new Map(), last: "" };
@@ -62,15 +62,22 @@ Réponds uniquement par un objet JSON :
   };
 
   const base = c => c.url.replace(/\/$/, "");
-  /* modèle introuvable (404) : on lit la liste du fournisseur et on prend un modèle qui existe vraiment */
-  async function pickModel(c, signal) {
+  /* modèle introuvable (404) : on lit la liste du fournisseur et on choisit un vrai modèle de TEXTE, jamais voix/image/garde-fou */
+  const NOT_TEXT = /tts|orpheus|playai|canopy|image|imagen|live|embed|audio|vision|guard|safeguard|whisper|preview|lite|veo|aqa|robotics|computer-use|compound/i;
+  const ver = id => { const m = id.match(/gemini-(\d+(?:\.\d+)?)-flash$/); return m ? parseFloat(m[1]) : -1; };
+  async function pickModel(c, signal, cur, hint) {
     const r = await fetch(base(c) + "/models", { headers: { Authorization: "Bearer " + c.key }, signal });
     if (!r.ok) return null;
-    const ids = ((await r.json()).data || []).map(x => String(x.id || "").replace(/^models\//, "")).filter(Boolean);
-    const bad = /tts|image|live|embed|audio|vision|guard|whisper|preview|lite/i;
-    const prefs = [/^llama-3\.3-70b-versatile$/, /^gemini-2\.5-flash$/, /^gemini-flash-latest$/, /^gemini-.*flash/, /^llama/, /./];
-    for (const re of prefs) { const m = ids.find(i => re.test(i) && !bad.test(i)); if (m) return m; }
-    return null;
+    const ids = ((await r.json()).data || []).map(x => String(x.id || "").replace(/^models\//, "")).filter(Boolean)
+      .filter(i => i !== cur && !NOT_TEXT.test(i));
+    if (hint && ids.includes(hint)) return hint;
+    const flash = ids.filter(i => ver(i) > 0).sort((x, y) => ver(y) - ver(x));
+    const prefs = [/^gemini-flash-latest$/, null, /^llama-3\.3-70b/, /^llama-3\.1-8b/, /^openai\/gpt-oss-20b$/, /^openai\/gpt-oss-120b$/, /^qwen\//, /^llama/];
+    for (const re of prefs) {
+      if (re === null) { if (flash[0]) return flash[0]; continue; }
+      const m = ids.find(i => re.test(i)); if (m) return m;
+    }
+    return null;                                              // mieux vaut une erreur claire qu'un mauvais modèle
   }
 
   async function call(c, body, signal) {
@@ -79,31 +86,35 @@ Réponds uniquement par un objet JSON :
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + c.key },
       body: JSON.stringify(body)
     });
-    let r = await send();
+    let r = await send(), raw = null;
     if (r.status === 404 && !c._healed) {
       c._healed = true;
-      const m = await pickModel(c, signal).catch(() => null);
-      if (m && m !== body.model) {
+      try { raw = typeof r.text === "function" ? await r.text() : JSON.stringify(await r.json()); } catch (e) { raw = ""; }
+      const h = String(raw).match(/use models\/([\w.\-]+)/i);
+      const m = await pickModel(c, signal, body.model, h && h[1]).catch(() => null);
+      if (m) {
         const from = body.model; body.model = m; c.model = m;
         if (Ia.onHeal) try { Ia.onHeal(c, m, from); } catch (e) {}
-        r = await send();
+        r = await send(); raw = null;
       }
     }
     if (!r.ok) {
-      let m = ""; let raw = "";
-      try { raw = typeof r.text === "function" ? await r.text() : JSON.stringify(await r.json()); const j = JSON.parse(raw); m = (j.error && j.error.message) || (Array.isArray(j) && j[0] && j[0].error && j[0].error.message) || ""; } catch (e) {}
-      if (!m && raw) m = raw.replace(/\s+/g, " ").slice(0, 120);
+      let m = "";
+      try {
+        if (raw === null) raw = typeof r.text === "function" ? await r.text() : JSON.stringify(await r.json());
+        const j = JSON.parse(raw); m = (j.error && j.error.message) || (Array.isArray(j) && j[0] && j[0].error && j[0].error.message) || "";
+      } catch (e) {}
+      if (!m && raw) m = String(raw).replace(/\s+/g, " ").slice(0, 120);
       const err = new Error(r.status + (m ? " " + m.slice(0, 160) : "") + " [" + base(c).replace(/^https?:\/\//, "").slice(0, 60) + " / " + body.model + "]"); err.status = r.status; throw err;
     }
     return r.json();
   }
 
-  /* -> { variants: [textes à essayer après l'original], kind, qcm } ou null (jamais d'exception) */
   async function attempt(c, text, o) {
     const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 7000);
     try {
       const body = {
-        model: c.model, temperature: 0, max_tokens: 400,
+        model: c.model, temperature: 0, max_tokens: 700,
         messages: [{ role: "system", content: systemPrompt(o.lang, o.subject) }, { role: "user", content: text }],
         response_format: { type: "json_object" }
       };
@@ -192,7 +203,7 @@ La citation doit exister telle quelle dans le passage. Langue des passages : ${L
     for (const c of [Ia.cfg, Ia.cfg2].filter(Boolean)) {
       const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 9000);
       try {
-        const body = { model: c.model, temperature: 0, max_tokens: 300,
+        const body = { model: c.model, temperature: 0, max_tokens: 700,
           messages: [{ role: "system", content: answerPrompt(o.lang, o.subject) }, { role: "user", content: user }],
           response_format: { type: "json_object" } };
         let data;
@@ -241,7 +252,7 @@ Si tu n'es pas sûr, dis-le dans "risposta" et mets "altro". N'invente jamais un
     for (const c of [Ia.cfg, Ia.cfg2].filter(Boolean)) {
       const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 12000);
       try {
-        const body = { model: c.model, temperature: 0, max_tokens: 350,
+        const body = { model: c.model, temperature: 0, max_tokens: 800,
           messages: [{ role: "system", content: freePrompt(o.subject) }, { role: "user", content: text }],
           response_format: { type: "json_object" } };
         let data;
