@@ -97,3 +97,8 @@ Dossier `android/` : une enveloppe Android de cette même appli web. Le micro et
 **Au premier lancement** : autorise le micro et les notifications, et accepte l'exemption d'économie de batterie (sinon Android peut couper l'écoute écran éteint). Touche le bouton rond : l'écoute est permanente. Arrêt : bouton rond, « stop », ou « Arrêter » dans la notification.
 
 La reconnaissance vocale utilise celle de Google sur le téléphone (réseau nécessaire). Le bip de début d'écoute est coupé.
+
+## Écoute permanente : pauses et écho
+- Une pause courte au milieu d'une question ne la coupe plus : après chaque morceau, l'appli attend ~2,2 s (jusqu'à 4 morceaux) et fusionne avant de répondre.
+- Si le micro réentend la réponse que l'appli vient de dire (ou la même question juste après), c'est ignoré : plus de boucle. Délai de 1,3 s après la réponse avant de réécouter.
+- Application Android : relancer le workflow « android » pour récupérer cette version.

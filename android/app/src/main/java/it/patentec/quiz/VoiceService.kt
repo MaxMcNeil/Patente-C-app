@@ -105,7 +105,7 @@ class VoiceService : Service(), RecognitionListener, TextToSpeech.OnInitListener
 
     fun handle(what: String, lang: String?, text: String?) {
         when (what) {
-            "listen" -> listen(lang ?: "it-IT")
+            "listen" -> listen(lang ?: "it-IT", text?.toLongOrNull() ?: 0L)
             "speak" -> speak(text ?: "", lang ?: "it-IT")
             "stop" -> shutdown()
         }
@@ -121,8 +121,16 @@ class VoiceService : Service(), RecognitionListener, TextToSpeech.OnInitListener
             try { am.adjustStreamVolume(st, d, 0) } catch (_: Exception) {}
     }
 
-    private fun listen(lang: String) {
+    private var began = false
+    private val graceStop = Runnable {
+        if (!began) { try { sr?.cancel() } catch (_: Exception) {}; send(null, "no-speech") }
+    }
+
+    /** graceMs > 0 : écoute de continuation, abandonnée si personne ne se remet à parler dans ce délai. */
+    private fun listen(lang: String, graceMs: Long) {
         try { tts?.stop() } catch (_: Exception) {}
+        began = false
+        h.removeCallbacks(graceStop)
         muteBeep(true)
         if (sr == null) {
             if (!SpeechRecognizer.isRecognitionAvailable(this)) {
@@ -137,6 +145,7 @@ class VoiceService : Service(), RecognitionListener, TextToSpeech.OnInitListener
                 .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                 .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L)
                 .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L))
+            if (graceMs > 0) h.postDelayed(graceStop, graceMs)
         } catch (e: Exception) {
             js("window.__nv&&window.__nv.heard&&window.__nv.heard(null,'start')")
         }
@@ -158,11 +167,13 @@ class VoiceService : Service(), RecognitionListener, TextToSpeech.OnInitListener
     }
 
     override fun onResults(b: Bundle?) {
+        h.removeCallbacks(graceStop)
         val s = b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
         send(if (s.isNullOrBlank()) null else s, "")
     }
 
     override fun onError(e: Int) {
+        h.removeCallbacks(graceStop)
         val code = when (e) {
             SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "not-allowed"
             SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "no-speech"
@@ -176,7 +187,7 @@ class VoiceService : Service(), RecognitionListener, TextToSpeech.OnInitListener
     }
 
     override fun onReadyForSpeech(p: Bundle?) {}
-    override fun onBeginningOfSpeech() {}
+    override fun onBeginningOfSpeech() { began = true; h.removeCallbacks(graceStop) }
     override fun onRmsChanged(r: Float) {}
     override fun onBufferReceived(b: ByteArray?) {}
     override fun onEndOfSpeech() {}

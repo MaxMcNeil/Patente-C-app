@@ -195,7 +195,9 @@ const kbKey=()=>"kb:"+(CFG.active||"demo"),mineKey=()=>"mine:"+(CFG.active||"dem
 let LASTSAY=Promise.resolve();
 const NV=window.NativeVoice||null;                 // présent seulement dans l'appli Android (voir android/)
 window.__nv={heard:null,spoken:null,stopped:()=>{if(typeof CONV!=="undefined"&&CONV)stopConv(true)}};
+let LASTSPOKEN="",LASTSPOKENAT=0,LASTQ="",LASTQAT=0;
 function say(t){
+  if(t){LASTSPOKEN=String(t);LASTSPOKENAT=Date.now()}
   LASTSAY=new Promise(res=>{
     if(!t)return res();
     if(NV&&typeof CONV!=="undefined"&&CONV){            // Android : la voix passe par le service (marche écran verrouillé)
@@ -420,22 +422,35 @@ async function wakeLock(on){
 document.addEventListener("visibilitychange",()=>{if(CONV&&!document.hidden&&!WL)wakeLock(true)});
 function waitVisible(){return new Promise(res=>{const f=()=>{if(!document.hidden||!CONV){document.removeEventListener("visibilitychange",f);res()}};document.addEventListener("visibilitychange",f)})}
 let REC=null,RECERR="";
-function listenOnce(){
+/* grace > 0 : écoute de « continuation » : si personne ne se remet à parler dans ce délai (ms), on abandonne (null) */
+function listenOnce(grace){
   if(NV)return new Promise(res=>{
     let done=false;RECERR="";
     const fin=(t,e)=>{if(done)return;done=true;window.__nv.heard=null;RECERR=e||"";res(t||null)};
     window.__nv.heard=fin;setTimeout(()=>fin(null,"timeout"),40000);
-    try{NV.listen(LOC[lang()])}catch(e){fin(null,"start")}
+    try{if(grace>0&&NV.listenGrace)NV.listenGrace(LOC[lang()],grace);else NV.listen(LOC[lang()])}catch(e){fin(null,"start")}
   });
   return new Promise(res=>{
-    let got=null;RECERR="";
+    let got=null,started=false,timer=null;RECERR="";
     let r;try{r=new SR()}catch(e){RECERR="unsupported";return res(null)}
     REC=r;r.lang=LOC[lang()];r.interimResults=false;r.maxAlternatives=1;
-    r.onresult=e=>{got=e.results[0][0].transcript};
+    r.onspeechstart=()=>{started=true;clearTimeout(timer)};
+    r.onresult=e=>{started=true;clearTimeout(timer);got=e.results[0][0].transcript};
     r.onerror=e=>{RECERR=e.error};
-    r.onend=()=>{REC=null;res(got)};
-    try{r.start()}catch(e){RECERR="start";res(null)}
+    r.onend=()=>{clearTimeout(timer);REC=null;res(got)};
+    try{r.start();if(grace>0)timer=setTimeout(()=>{if(!started)try{r.abort()}catch(e){}},grace)}catch(e){RECERR="start";res(null)}
   });
+}
+const GRACE=2200;   // pause tolérée au milieu d'une question avant de répondre (ms)
+const sameTxt=s=>Engine.toks(s).join(" ");
+/* ce que le micro vient d'entendre est-il l'écho de la réponse que l'appli vient de dire (ou la même question reprise) ? */
+function isEcho(said){
+  const a=Engine.toks(said);if(!a.length)return false;
+  if(Date.now()-LASTSPOKENAT<9000&&a.length>=3){
+    const b=new Set(Engine.toks(LASTSPOKEN));
+    if(a.filter(w=>b.has(w)).length/a.length>=0.6)return true;
+  }
+  return Date.now()-LASTQAT<8000&&sameTxt(said)===LASTQ;
 }
 async function convLoop(){
   let errs=0,bad=0;
@@ -448,10 +463,21 @@ async function convLoop(){
     if(RECERR==="network"){if(++errs>=5){setConv("Reconnaissance vocale indisponible (réseau). Mode arrêté.");return stopConv(true)}setConv("Réseau instable, nouvel essai…");await sleep(2500);continue}
     if(heard===null){if(RECERR&&RECERR!=="no-speech"&&RECERR!=="aborted"){bad=Math.min(bad+1,6);await sleep(700*bad)}else if(Date.now()-t0<900)await sleep(900);continue}   // silence : on réécoute, toujours
     errs=0;bad=0;
-    const said=heard.trim();
+    let said=heard.trim();
+    // pause courte au milieu de la question : on attend la suite (jusqu'à 4 morceaux) avant de répondre
+    for(let k=0;k<4&&CONV;k++){
+      setConv("Je t'écoute encore… (dis « stop » pour arrêter)");
+      const more=await listenOnce(GRACE);
+      if(!CONV)break;
+      if(!more)break;
+      said+=" "+more.trim();
+    }
+    if(!CONV)break;
     if(STOPW.test(said)&&said.split(/\s+/).length<=3){await say(lang()==="it"?"Va bene, mi fermo.":"D'accord, j'arrête.");return stopConv(true)}
+    if(isEcho(said)){setConv("Je t'écoute… (écho ignoré)");await sleep(500);continue}   // l'appli s'était entendue elle-même
+    LASTQ=sameTxt(said);LASTQAT=Date.now();
     $("txt").value=said;setConv("Je cherche la réponse…");
-    await ask(said);await LASTSAY;await sleep(600);       // on attend la fin de la réponse parlée avant de réécouter
+    await ask(said);await LASTSAY;LASTSPOKENAT=Date.now();await sleep(1300);       // on attend la fin de la réponse parlée avant de réécouter
   }
 }
 function stopConv(silent){

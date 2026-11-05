@@ -81,6 +81,7 @@ class MainActivity : Activity() {
 /** Pont JavaScript : window.NativeVoice dans l'appli web. */
 class Bridge(private val ctx: Context) {
     @JavascriptInterface fun listen(lang: String) { VoiceService.cmd(ctx, "listen", lang, null) }
+    @JavascriptInterface fun listenGrace(lang: String, graceMs: Int) { VoiceService.cmd(ctx, "listen", lang, graceMs.toString()) }
     @JavascriptInterface fun speak(text: String, lang: String) { VoiceService.cmd(ctx, "speak", lang, text) }
     @JavascriptInterface fun stop() { VoiceService.cmd(ctx, "stop", null, null) }
     @JavascriptInterface fun version(): String = "1"
