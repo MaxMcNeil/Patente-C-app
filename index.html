@@ -51,7 +51,7 @@ summary{cursor:pointer;font-weight:600}
   </div>
 
   <button id="mic" type="button">Poser une question</button>
-  <button id="conv" type="button" class="btn" style="align-self:center">Mode conversation mains libres</button>
+  <button id="conv" type="button" class="btn" style="align-self:center" hidden>Mode conversation mains libres</button>
   <p class="sub" id="convmsg" aria-live="polite" style="text-align:center"></p>
   <form id="f">
     <textarea id="txt" rows="2" placeholder="ou écris ta question (QCM : … A … B … C …)" aria-label="Question"></textarea>
@@ -388,15 +388,8 @@ async function ask(heard){
 
 /* ---------- voix ---------- */
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-$("mic").onclick=()=>{
-  if(!SR){$("note").hidden=false;return}
-  const r=new SR();r.lang=LOC[lang()];r.interimResults=false;
-  r.onstart=()=>$("mic").classList.add("on");
-  r.onend=()=>$("mic").classList.remove("on");
-  r.onresult=e=>{const s=e.results[0][0].transcript;$("txt").value=s;ask(s)};
-  r.onerror=e=>{$("etat").textContent="Micro : "+e.error};
-  r.start();
-};
+// le bouton rond démarre / arrête l'écoute permanente (voir plus bas)
+
 $("f").onsubmit=e=>{e.preventDefault();ask($("txt").value)};
 $("txt").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ask($("txt").value)}});
 
@@ -408,6 +401,7 @@ let CONV=false,WL=null;
 const STOPW=/^\W*(stop|basta|ferma|fermati|fermo|termina|esci|fine|smetti|chiudi|arrête|arrete)\b/i;
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const setConv=m=>{$("convmsg").textContent=m};
+function micLabel(on){const m=$("mic");m.textContent=on?"J'écoute… Touche pour arrêter":"Poser une question";m.classList.toggle("on",on);$("conv").textContent=on?"Arrêter la conversation":"Mode conversation mains libres"}
 async function wakeLock(on){
   try{
     if(on&&"wakeLock" in navigator){WL=await navigator.wakeLock.request("screen");WL.addEventListener("release",()=>{WL=null})}
@@ -429,7 +423,7 @@ function listenOnce(){
   });
 }
 async function convLoop(){
-  let errs=0;
+  let errs=0,bad=0;
   while(CONV){
     if(document.hidden){setConv("En pause : écran verrouillé ou appli en arrière-plan. Reviens sur l'appli pour reprendre.");await waitVisible();continue}
     setConv("Je t'écoute… (dis « stop » pour arrêter)");
@@ -437,10 +431,10 @@ async function convLoop(){
     if(!CONV)break;
     if(RECERR==="not-allowed"||RECERR==="service-not-allowed"){setConv("Micro refusé : autorise-le dans Chrome (cadenas de la barre d'adresse).");return stopConv(true)}
     if(RECERR==="network"){if(++errs>=5){setConv("Reconnaissance vocale indisponible (réseau). Mode arrêté.");return stopConv(true)}setConv("Réseau instable, nouvel essai…");await sleep(2500);continue}
-    if(heard===null){if(Date.now()-t0<900)await sleep(900);continue}   // silence : on réécoute
-    errs=0;
+    if(heard===null){if(RECERR&&RECERR!=="no-speech"&&RECERR!=="aborted"){bad=Math.min(bad+1,6);await sleep(700*bad)}else if(Date.now()-t0<900)await sleep(900);continue}   // silence : on réécoute, toujours
+    errs=0;bad=0;
     const said=heard.trim();
-    if(STOPW.test(said)){await say(lang()==="it"?"Va bene, mi fermo.":"D'accord, j'arrête.");return stopConv(true)}
+    if(STOPW.test(said)&&said.split(/\s+/).length<=3){await say(lang()==="it"?"Va bene, mi fermo.":"D'accord, j'arrête.");return stopConv(true)}
     $("txt").value=said;setConv("Je cherche la réponse…");
     await ask(said);await LASTSAY;await sleep(600);       // on attend la fin de la réponse parlée avant de réécouter
   }
@@ -448,7 +442,7 @@ async function convLoop(){
 function stopConv(silent){
   CONV=false;try{if(REC)REC.abort()}catch(e){}
   if(window.speechSynthesis)speechSynthesis.cancel();
-  wakeLock(false);$("conv").textContent="Mode conversation mains libres";
+  wakeLock(false);micLabel(false);
   if(!silent)setConv("");else if(!$("convmsg").textContent.startsWith("Micro")&&!$("convmsg").textContent.includes("indisponible"))setConv("Mode conversation arrêté.");
 }
 $("conv").onclick=()=>{
@@ -457,16 +451,18 @@ $("conv").onclick=()=>{
   // la conversation se fait dans la langue de la base (italien pour la patente)
   const L=(KB.meta&&KB.meta.langue)||"it";
   if(LOC[L]){$("lang").value=L;const a=active();if(a){a.lang=L;saveCfg()}}
-  CONV=true;$("conv").textContent="Arrêter la conversation";
+  CONV=true;micLabel(true);
   wakeLock(true);convLoop();
 };
+$("mic").onclick=$("conv").onclick;
+
 
 /* ---------- bases (une par matière, isolées) ---------- */
 function fillFields(){
   const a=active()||{};
   const useDef=CFG.bases.length<=1;               // une seule base : on propose la tienne ; pour une 2e base, les champs restent vides
   $("bname").value=a.name||(useDef?DEF.name:"");$("repo").value=a.repo||(useDef?DEF.repo:"");$("branch").value=a.branch||DEF.branch;$("token").value=a.token||"";
-  $("lang").value=LOC[a.lang]?a.lang:(LOC[(KB.meta||{}).langue]?KB.meta.langue:"fr");
+  $("lang").value=LOC[a.lang]?a.lang:(LOC[(KB.meta||{}).langue]?KB.meta.langue:"it");
   iaFill();$("strict").checked=!!CFG.strict;$("sem").checked=!!CFG.sem;$("semT").value=CFG.semT||localStorage.getItem("qv_semT")||"";$("syncmsg").textContent="";
 }
 async function loadBase(){

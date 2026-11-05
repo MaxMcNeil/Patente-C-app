@@ -52,12 +52,11 @@ Mise en place : crée une clé gratuite chez le fournisseur (Google AI Studio : 
 Réglages → IA gratuite, puis **Tester la clé**. Si le modèle proposé n'existe plus, le test affiche les modèles disponibles : recopie-en un.
 Les offres gratuites ont des limites de requêtes qui peuvent changer sans préavis, et leurs conditions sur l'usage des données varient : lis-les.
 
-## Mode conversation mains libres
+## Écoute permanente (le bouton rond)
 
-Bouton « Mode conversation mains libres » : tu poses ta question à voix haute, l'appli répond **en italien** à voix haute, puis se remet à écouter toute seule. Dis « stop » (ou « basta », « ferma »…) ou touche le bouton pour arrêter.
-- L'écoute et la réponse suivent la langue de la base (italien pour Patente C).
-- L'écran est gardé allumé tant que le mode tourne (Wake Lock).
-- **Limite du web** : écran verrouillé ou économie de batterie, Chrome coupe le micro d'une page web. Le mode se met en pause et reprend quand tu rouvres l'appli. Pour écouter écran verrouillé, il faudrait une vraie appli Android.
+Touche le bouton rond une fois : l'appli écoute en continu, répond **en italien** à voix haute, puis se remet à écouter, pour un nombre illimité de questions. Les silences ne l'arrêtent jamais. Pour arrêter : touche de nouveau le bouton, ou dis « stop », « basta » ou « ferma » (phrase de trois mots au plus, pour qu'une question contenant « fine » ne l'arrête pas). La langue par défaut est l'italien.
+- L'écran reste allumé tant que l'écoute est active.
+- **Limite du web** : écran verrouillé ou appli en arrière-plan, Android coupe le micro d'une page web. L'écoute se met en pause et reprend dès que tu reviens sur l'appli. Pour écouter écran verrouillé, il faut une vraie appli Android.
 - Chrome Android émet un petit bip à chaque redémarrage de l'écoute : normal.
 
 **Clé de secours** : dans Réglages, renseigne la clé du fournisseur principal (Gemini) et, en dessous, celle de l'autre (Groq). Si Gemini est en panne, sans quota ou trop lent, l'appli passe seule sur Groq. « Tester les clés » vérifie les deux.
