@@ -86,3 +86,14 @@ Touche le bouton rond une fois : l'appli écoute en continu, répond **en italie
 
 ## Contenus locaux (facultatif)
 « Charger mes fichiers » ajoute des `.json` (format `quiz/quiz.json`) ou des `.txt` / `.md` (cours) qui restent sur le téléphone.
+
+
+## Appli Android (écoute même écran verrouillé)
+
+Dossier `android/` : une enveloppe Android de cette même appli web. Le micro et la voix passent par un service au premier plan (notification « Patente C : écoute active »), ce qui permet d'écouter et de répondre écran verrouillé. Tout le reste (base, clés IA, réponses) est l'appli web habituelle, chargée depuis `https://maxmcneil.github.io/Patente-C-app/` : une mise à jour de l'appli web s'applique sans réinstaller l'APK.
+
+**Construire l'APK** (jamais automatique) : GitHub > onglet Actions > « Appli Android (APK) » > Run workflow. L'APK apparaît dans Releases (tag `android-latest`). Il est signé avec une clé fixe : les versions suivantes s'installent par-dessus.
+
+**Au premier lancement** : autorise le micro et les notifications, et accepte l'exemption d'économie de batterie (sinon Android peut couper l'écoute écran éteint). Touche le bouton rond : l'écoute est permanente. Arrêt : bouton rond, « stop », ou « Arrêter » dans la notification.
+
+La reconnaissance vocale utilise celle de Google sur le téléphone (réseau nécessaire). Le bip de début d'écoute est coupé.

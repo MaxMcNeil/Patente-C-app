@@ -193,9 +193,18 @@ const dset=async(k,v)=>{try{const db=await DB();return await new Promise(res=>{c
 const kbKey=()=>"kb:"+(CFG.active||"demo"),mineKey=()=>"mine:"+(CFG.active||"demo");
 
 let LASTSAY=Promise.resolve();
+const NV=window.NativeVoice||null;                 // présent seulement dans l'appli Android (voir android/)
+window.__nv={heard:null,spoken:null,stopped:()=>{if(typeof CONV!=="undefined"&&CONV)stopConv(true)}};
 function say(t){
   LASTSAY=new Promise(res=>{
-    if(!window.speechSynthesis||!t)return res();
+    if(!t)return res();
+    if(NV&&typeof CONV!=="undefined"&&CONV){            // Android : la voix passe par le service (marche écran verrouillé)
+      let done=false;const fin=()=>{if(!done){done=true;window.__nv.spoken=null;res()}};
+      window.__nv.spoken=fin;setTimeout(fin,45000);
+      try{NV.speak(t,LOC[lang()])}catch(e){fin()}
+      return;
+    }
+    if(!window.speechSynthesis)return res();
     speechSynthesis.cancel();
     const u=new SpeechSynthesisUtterance(t);u.lang=LOC[lang()];
     let done=false;const fin=()=>{if(!done){done=true;res()}};
@@ -412,6 +421,12 @@ document.addEventListener("visibilitychange",()=>{if(CONV&&!document.hidden&&!WL
 function waitVisible(){return new Promise(res=>{const f=()=>{if(!document.hidden||!CONV){document.removeEventListener("visibilitychange",f);res()}};document.addEventListener("visibilitychange",f)})}
 let REC=null,RECERR="";
 function listenOnce(){
+  if(NV)return new Promise(res=>{
+    let done=false;RECERR="";
+    const fin=(t,e)=>{if(done)return;done=true;window.__nv.heard=null;RECERR=e||"";res(t||null)};
+    window.__nv.heard=fin;setTimeout(()=>fin(null,"timeout"),40000);
+    try{NV.listen(LOC[lang()])}catch(e){fin(null,"start")}
+  });
   return new Promise(res=>{
     let got=null;RECERR="";
     let r;try{r=new SR()}catch(e){RECERR="unsupported";return res(null)}
@@ -425,7 +440,7 @@ function listenOnce(){
 async function convLoop(){
   let errs=0,bad=0;
   while(CONV){
-    if(document.hidden){setConv("En pause : écran verrouillé ou appli en arrière-plan. Reviens sur l'appli pour reprendre.");await waitVisible();continue}
+    if(document.hidden&&!NV){setConv("En pause : écran verrouillé ou appli en arrière-plan. Reviens sur l'appli pour reprendre.");await waitVisible();continue}
     setConv("Je t'écoute… (dis « stop » pour arrêter)");
     const t0=Date.now(),heard=await listenOnce();
     if(!CONV)break;
@@ -441,18 +456,19 @@ async function convLoop(){
 }
 function stopConv(silent){
   CONV=false;try{if(REC)REC.abort()}catch(e){}
+  if(NV)try{NV.stop()}catch(e){}
   if(window.speechSynthesis)speechSynthesis.cancel();
   wakeLock(false);micLabel(false);
   if(!silent)setConv("");else if(!$("convmsg").textContent.startsWith("Micro")&&!$("convmsg").textContent.includes("indisponible"))setConv("Mode conversation arrêté.");
 }
 $("conv").onclick=()=>{
   if(CONV)return stopConv(false);
-  if(!SR){$("note").hidden=false;return}
+  if(!SR&&!NV){$("note").hidden=false;return}
   // la conversation se fait dans la langue de la base (italien pour la patente)
   const L=(KB.meta&&KB.meta.langue)||"it";
   if(LOC[L]){$("lang").value=L;const a=active();if(a){a.lang=L;saveCfg()}}
   CONV=true;micLabel(true);
-  wakeLock(true);convLoop();
+  if(!NV)wakeLock(true);convLoop();
 };
 $("mic").onclick=$("conv").onclick;
 
