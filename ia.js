@@ -264,39 +264,64 @@ La citation doit exister telle quelle dans le passage. Langue des passages : ${L
   /* ---------- l'IA répond SEULE, avec ses connaissances (la base ne sert que de secours) ---------- */
   const freePrompt = (subject) => `Tu es un instructeur expert de l'examen ${subject || "patente C / CQC italienne"} (code de la route et réglementation italiens et européens en vigueur).
 L'utilisateur parle à voix haute, souvent avec des mots à lui ou mal transcrits : comprends le sens. Réponds EN ITALIEN, de façon brève et précise.
-Si c'est une affirmation : "vero" ou "falso". Si c'est un QCM avec des choix A, B, C : la lettre. Sinon : "altro" avec une réponse courte.
-Réponds uniquement par un objet JSON : {"verdetto":"vero"|"falso"|"A"|"B"|"C"|"D"|"E"|"F"|"altro","risposta":"1 à 3 phrases en italien qui donnent la réponse et la raison (chiffres exacts)"}
+Si c'est une affirmation : "vero" ou "falso". Si c'est un QCM avec des choix (numérotés 1, 2, 3… ou A, B, C… ; les numéros 1,2,3 correspondent à A,B,C) : le numéro du bon choix. Sinon : "altro" avec une réponse courte.
+Réponds uniquement par un objet JSON : {"verdetto":"vero"|"falso"|"1"|"2"|"3"|"4"|"5"|"6"|"altro","risposta":"1 à 3 phrases en italien qui donnent la réponse et la raison (chiffres exacts)"}
 Si tu n'es pas sûr, dis-le dans "risposta" et mets "altro". N'invente jamais un chiffre ni un article de loi.`;
 
-  /* -> { v: "yes"|"no"|indice|"other", text, via } ou null (jamais d'exception) */
+  /* verdict brut de l'IA -> "yes" | "no" | indice (0..5) | "other" */
+  const NWORD = { uno: 1, una: 1, primo: 1, prima: 1, due: 2, secondo: 2, seconda: 2, tre: 3, terzo: 3, terza: 3, quattro: 4, quarto: 4, quarta: 4, cinque: 5, quinto: 5, sei: 6, sesto: 6, one: 1, two: 2, three: 3, four: 4, five: 5 };
+  function parseVerdict(raw, mcq) {
+    const r = String(raw == null ? "" : raw).trim().toLowerCase().replace(/[.!"'`«»]/g, "").replace(/^(risposta|answer|opzione|scelta|n°|numero)\s*/, "");
+    if (/^(vero|true|v|si|sì|yes|corretto|esatto)$/.test(r)) return mcq ? "other" : "yes";     // un QCM n'accepte qu'un numéro
+    if (/^(falso|false|f|no|errato|sbagliato)$/.test(r)) return mcq ? "other" : "no";
+    let k = -1;
+    if (/^[1-8]$/.test(r)) k = +r - 1;
+    else if (/^[a-f]$/.test(r)) k = "abcdef".indexOf(r);
+    else if (NWORD[r]) k = NWORD[r] - 1;
+    if (k < 0) return "other";
+    if (mcq && k >= mcq.opts.length) return "other";     // numéro hors des choix proposés : invalide
+    return k;
+  }
+  const forcedPrompt = (n) => `Tu dois répondre avec UN SEUL choix, sans autre mot. Réponds uniquement par un objet JSON.
+${n ? `La question est un QCM à ${n} choix : réponds {"verdetto":"<numéro du bon choix de 1 à ${n}>"}.` : `La question est une affirmation : réponds {"verdetto":"vero"} ou {"verdetto":"falso"}.`}
+Réfléchis à la réglementation italienne et européenne en vigueur et choisis la réponse la plus probable ; ne réponds jamais "altro".`;
+
+  /* -> { v: "yes"|"no"|indice|"other", text, via } ou null (jamais d'exception).
+     Deux tentatives par fournisseur : réponse complète, puis réponse forcée si le verdict n'est pas exploitable. */
   Ia.free = async function (text, mcq, o = {}) {
     if (!Ia.ready()) return null;
     const errs = [];
+    let keep = null;
     for (const c of [Ia.cfg, Ia.cfg2].filter(Boolean)) {
-      const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 35000);
+      const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), o.timeout || 30000);
       try {
-        const body = { model: c.model, temperature: 0, max_tokens: 800,
-          messages: [{ role: "system", content: freePrompt(o.subject) }, { role: "user", content: text }],
-          response_format: { type: "json_object" } };
-        let data;
-        try { data = await call(c, body, ctrl.signal); }
-        catch (e) { if (e.status !== 400) throw e; delete body.response_format; data = await call(c, body, ctrl.signal); }
+        const mk = (sys, extra) => ({ model: c.model, temperature: 0, max_tokens: 800,
+          messages: [{ role: "system", content: sys }, { role: "user", content: text }], response_format: { type: "json_object" }, ...extra });
+        const go = async (body) => {
+          try { return await call(c, body, ctrl.signal); }
+          catch (e) { if (e.status !== 400) throw e; delete body.response_format; return await call(c, body, ctrl.signal); }
+        };
+        const data = await go(mk(freePrompt(o.subject)));
         const j = parseJson(data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content);
         const txt = j && typeof j.risposta === "string" ? j.risposta.trim() : "";
-        if (!j || !txt) throw new Error("réponse illisible");
-        const r = String(j.verdetto || "").trim().toLowerCase();
-        let v = "other";
-        if (/^(vero|true|v)$/.test(r)) v = "yes";
-        else if (/^(falso|false|f)$/.test(r)) v = "no";
-        else if (mcq && /^[a-f]$/.test(r) && "abcdef".indexOf(r) < mcq.opts.length) v = "abcdef".indexOf(r);
-        Ia.lastFree = errs.length ? "secours utilisé" : "";
-        return { v, text: txt.slice(0, 600), via: c.label || c.model };
+        let v = j ? parseVerdict(j.verdetto, mcq) : "other";
+        if (!j) throw new Error("réponse illisible");
+        if (v === "other") {                       // verdict inexploitable (altro, numéro hors choix…) : on force un choix
+          const d2 = await go(mk(forcedPrompt(mcq ? mcq.opts.length : 0)));
+          const j2 = parseJson(d2.choices && d2.choices[0] && d2.choices[0].message && d2.choices[0].message.content);
+          if (j2) v = parseVerdict(j2.verdetto, mcq);
+        }
+        if (v !== "other" && mcq == null && typeof v === "number" && v > 5) v = "other";
+        const res = { v, text: (txt || "").slice(0, 600), via: c.label || c.model };
+        if (v !== "other") { Ia.lastFree = errs.length ? "secours utilisé" : ""; return res; }
+        keep = keep || res; errs.push((c.label || c.model) + " : verdict inexploitable");
       } catch (e) { errs.push((c.label || c.model) + " : " + (e.name === "AbortError" ? "délai dépassé" : e.message)); }
       finally { clearTimeout(timer); }
     }
     Ia.lastFree = errs.join(" ; ");
-    return null;
+    return keep;     // verdict « other » : l'appli passera à la base
   };
+  Ia.parseVerdict = parseVerdict;
 
   async function testOne(c) {
     const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 40000);

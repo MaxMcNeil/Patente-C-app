@@ -40,6 +40,7 @@ summary{cursor:pointer;font-weight:600}
 .row label{font-size:.85rem;color:var(--mut)}
 .row label.chk{display:flex;gap:8px;align-items:center;font-size:1rem;color:var(--ink)}
 [hidden]{display:none}
+.det{margin-top:.7rem}.det summary{color:#888;font-size:.85rem;cursor:pointer}
 </style>
 </head>
 <body>
@@ -131,6 +132,8 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const LOC={fr:"fr-FR",it:"it-IT",en:"en-US",ar:"ar-SA"};
 const L="ABCDEFGH";
+/* Seules réponses prononcées : Vero / Falso, ou le numéro de la réponse (uno, due, tre…) pour un QCM. Rien d'autre. */
+const NUMW=["uno","due","tre","quattro","cinque","sei","sette","otto"];
 const T={
  fr:{ia:"Question comprise comme",iaoff:"IA indisponible",rconf:"Les reformulations donnent des réponses différentes : je ne tranche pas.",sens:"Trouvé par le sens, pas par les mots : relis bien le passage.",yes:"Oui",no:"Non",unsure:"Je ne peux pas trancher avec certitude",ans:"Réponse",close:"Passages les plus proches",
      empty:"La base est vide. Synchronise-la dans Réglages ou charge des fichiers.",num:"La source indique : ",
@@ -203,12 +206,12 @@ function say(t){
     if(NV&&typeof CONV!=="undefined"&&CONV){            // Android : la voix passe par le service (marche écran verrouillé)
       let done=false;const fin=()=>{if(!done){done=true;window.__nv.spoken=null;res()}};
       window.__nv.spoken=fin;setTimeout(fin,45000);
-      try{NV.speak(t,LOC[lang()])}catch(e){fin()}
+      try{NV.speak(t,LOC.it)}catch(e){fin()}
       return;
     }
     if(!window.speechSynthesis)return res();
     speechSynthesis.cancel();
-    const u=new SpeechSynthesisUtterance(t);u.lang=LOC[lang()];
+    const u=new SpeechSynthesisUtterance(t);u.lang=LOC.it;
     let done=false;const fin=()=>{if(!done){done=true;res()}};
     u.onend=fin;u.onerror=fin;setTimeout(fin,45000);   // filet de sécurité : la boucle ne reste jamais bloquée
     speechSynthesis.speak(u);
@@ -268,28 +271,43 @@ function srcLine(p){
   if(/^https?:\/\//.test(p.origin))s+=` · <a href="${esc(p.origin)}" target="_blank" rel="noopener">lien</a>`;
   return `<p class="sub">${s}</p>`;
 }
-const saysLabel=(a,k)=>a.kind==="mcq"?(tr().ans+" "+L[k]):(k==="yes"?tr().yes:tr().no);
+const saysLabel=(a,k)=>a.kind==="mcq"?(tr().ans+" "+(k+1)):(k==="yes"?tr().yes:tr().no);
 const quote=(p,extra)=>`<blockquote>${esc(p.text)}</blockquote>${srcLine(p)}${extra||""}`;
 
+/* ---------- réponse admise : UNIQUEMENT « Vero », « Falso » ou le numéro du choix (uno, due, tre…). Rien d'autre, ni à l'écran ni à voix haute. ---------- */
+const VW={yes:"Vero",no:"Falso"};
+const isNum=v=>typeof v==="number"&&v>=0&&v<NUMW.length;
+const wordOf=v=>v==="yes"?VW.yes:v==="no"?VW.no:isNum(v)?NUMW[v]:"";
+function render(heard,v,detail,extra){
+  const res=$("res");res.hidden=false;
+  const big=v==="yes"?VW.yes:v==="no"?VW.no:String(v+1);
+  const cls=v==="no"?"ko":"ok";
+  res.innerHTML=`<div class="heard">« ${esc(heard)} »</div><div class="verdict ${cls}">${esc(big)}</div>`+
+    (detail?`<details class="det"><summary>Dettagli</summary>${detail}</details>`:"")+(extra||"");
+  say(wordOf(v));                                   // seul mot prononcé
+}
+/* aucune réponse possible (panne totale, rien dans la base) : on ne dit RIEN et on ne devine pas, signal visuel + vibration */
+function noAnswer(heard,detail){
+  const res=$("res");res.hidden=false;
+  res.innerHTML=`<div class="heard">« ${esc(heard)} »</div><div class="verdict wa">—</div>`+(detail?`<details class="det" open><summary>Dettagli</summary>${detail}</details>`:"");
+  try{navigator.vibrate&&navigator.vibrate([200,100,200])}catch(e){}
+  LASTSAY=Promise.resolve();
+}
+
 function showQuiz(heard,q){
-  const t=tr(),res=$("res");
-  let verdict,spoken,body="",bad=false;
+  const t=tr();
+  let v,body="";
   if(q.type==="qcm"){
-    const i=q.reponse;
-    verdict=t.ans+" "+L[i];
-    spoken=verdict+" : "+q.choix[i]+".";
-    body="<ul>"+q.choix.map((c,k)=>`<li class="${k===i?"good":""}">${L[k]}. ${esc(c)}</li>`).join("")+"</ul>";
+    v=Number(q.reponse);
+    body="<ul>"+q.choix.map((c,k)=>`<li class="${k===v?"good":""}">${k+1}. ${esc(c)}</li>`).join("")+"</ul>";
+    if(!isNum(v))return noAnswer(heard,"<p>quiz.json : réponse illisible</p>");
   }else{
-    const yes=["oui","vero","si","sì","v","true"].includes(String(q.reponse).toLowerCase());
-    bad=!yes;verdict=yes?t.yes:t.no;spoken=verdict+".";
+    v=["oui","vero","si","sì","v","true"].includes(String(q.reponse).toLowerCase())?"yes":["non","no","falso","f","false"].includes(String(q.reponse).toLowerCase())?"no":null;
+    if(!v)return noAnswer(heard,"<p>quiz.json : réponse illisible</p>");
   }
-  if(q.explication)spoken+=" "+q.explication;
   const from=q.titre?`<p class="sub">${esc(t.src)} : ${esc(q.titre)} · ${esc(q.statut||"non vérifié")}</p>`:"";
-  res.innerHTML=`<div class="heard">« ${esc(heard)} »</div><p class="sub">${esc(q.question)}</p>
-    <div class="verdict ${bad?"ko":"ok"}">${esc(verdict)}</div>${body}
-    ${q.explication?`<p>${esc(q.explication)}</p>`:""}${from}
-    ${q.video?`<p><a href="${esc(q.video)}" target="_blank" rel="noopener">${esc(t.video)}</a></p>`:""}`;
-  say(spoken);
+  render(heard,v,`<p class="sub">${esc(q.question)}</p>${body}${q.explication?`<p>${esc(q.explication)}</p>`:""}${from}`+
+    (q.video?`<p><a href="${esc(q.video)}" target="_blank" rel="noopener">${esc(t.video)}</a></p>`:""));
 }
 
 const AIT={fr:{free:"Réponse de l'IA, non vérifiée dans ta base",diff:"Ta base dit autre chose (à l'écrit seulement) :",conf:"L'IA et l'appli ne sont pas d'accord : je ne tranche pas",only:"Réponse lue par l'IA dans cette source (citation vérifiée) : relis le passage",ok:"Confirmé aussi par l'IA"},
@@ -297,61 +315,44 @@ const AIT={fr:{free:"Réponse de l'IA, non vérifiée dans ta base",diff:"Ta bas
  en:{free:"AI answer, not checked against your base",diff:"Your base says otherwise (written only):",conf:"The AI and the app disagree: I won't decide",only:"Answer read by the AI in this source (quote checked): read the passage",ok:"Also confirmed by the AI"},
  ar:{free:"إجابة الذكاء الاصطناعي، دون تحقق من قاعدتك",diff:"قاعدتك تقول غير ذلك (كتابةً فقط):",conf:"الذكاء الاصطناعي والتطبيق غير متفقين: لن أحسم",only:"إجابة قرأها الذكاء الاصطناعي في هذا المصدر (الاقتباس تم التحقق منه): أعد قراءة المقطع",ok:"أكده الذكاء الاصطناعي أيضًا"}};
 function showFree(heard,F,base){
-  const t=tr(),res=$("res");
-  let verdict,cls="wa";
-  if(F.v==="yes"){verdict=t.yes;cls="ok"}else if(F.v==="no"){verdict=t.no;cls="ko"}
-  else if(typeof F.v==="number"){verdict=t.ans+" "+L[F.v];cls="ok"}else verdict=t.ans;
   let body=`<p>${esc(F.text)}</p><p class="sub">${esc(AIT[lang()].free)} (${esc(F.via)})</p>`;
-  if(base&&base.verdict!=="unsure"&&F.v!=="other"&&String(base.verdict)!==String(F.v)&&base.passage)
+  if(base&&base.verdict!=="unsure"&&String(base.verdict)!==String(F.v)&&base.passage)
     body+=`<div class="warn"><b>${esc(AIT[lang()].diff)}</b>`+quote(base.passage)+`</div>`;
-  res.innerHTML=`<div class="heard">« ${esc(heard)} »</div><div class="verdict ${cls}">${esc(verdict)}</div>${body}`;
-  say((F.v==="other"?"":verdict+". ")+F.text);
+  render(heard,F.v,body);
+}
+/* verdict de la base quand elle hésite : on prend la meilleure piste (le moteur classe ses alternatives), jamais un « je ne sais pas » */
+const okV=(v,kind)=>kind==="mcq"?isNum(v):(v==="yes"||v==="no");
+function guessFrom(a){
+  if(!a||!a.alts)return null;
+  for(const p of a.alts){if(p&&okV(p.says,a.kind))return p.says}
+  return null;
 }
 function showKb(heard,a){
-  const t=tr(),res=$("res");
-  let verdict,cls,spoken,body="";
+  const t=tr();
+  let v,body="";
   if(a.verdict==="unsure"){
-    cls="wa";
-    if(a.reason==="conflict"||a.reason==="ai-conflict"){
-      verdict=a.reason==="ai-conflict"?AIT[lang()].conf:t.conflict;
-      body=a.alts.map(p=>`<p><b>${esc(t.says)} : ${esc(saysLabel(a,p.says))}</b></p>`+quote(p)).join("");
-    }else if(a.reason==="reformulation-conflict"){
-      verdict=t.rconf;
-      body=a.alts.map(p=>`<p><b>${esc(t.ia)} : « ${esc(p.understood)} » → ${esc(saysLabel(a,p.says))}</b></p>`+quote(p)).join("");
-    }else if(a.reason==="unverified-only"){
-      verdict=t.unver;
-      body=a.alts.map(p=>`<p><b>${esc(t.says)} : ${esc(saysLabel(a,p.says))}</b></p>`+quote(p)).join("");
-    }else{
-      verdict=t.unsure;
-      body=a.alts&&a.alts.length?`<p class="sub">${esc(t.close)}</p>`+a.alts.map(p=>quote(p)).join(""):`<p>${esc(t.nores)}</p>`;
-    }
-    spoken=verdict+".";
+    v=guessFrom(a);
+    if(a.alts&&a.alts.length)body+=`<p class="sub">${esc(t.unsure)} — ${esc(t.close)}</p>`+a.alts.map(p=>(p.says!==undefined?`<p><b>${esc(t.says)} : ${esc(saysLabel(a,p.says))}</b></p>`:"")+quote(p)).join("");
+    else body+=`<p>${esc(t.nores)}</p>`;
+    if(v===null)return noAnswer(heard,body);
   }else{
-    let extra="";
-    if(a.kind==="mcq"){
-      verdict=t.ans+" "+L[a.verdict];cls="ok";spoken=verdict+" : "+a.options[a.verdict]+".";
-      body="<ul>"+a.options.map((c,k)=>`<li class="${k===a.verdict?"good":""}">${L[k]}. ${esc(c)}</li>`).join("")+"</ul>";
-    }else{
-      const yes=a.verdict==="yes";
-      verdict=yes?t.yes:t.no;cls=yes?"ok":"ko";spoken=verdict+".";
-      if(a.reason==="number")extra=`<p>${esc(t.num)}${esc(a.sourceNums.join(", "))}</p>`;
-      if(a.reason==="negation")extra=`<p>${esc(t.neg)}</p>`;
+    v=a.verdict;
+    if(a.kind==="mcq")body+="<ul>"+a.options.map((c,k)=>`<li class="${k===a.verdict?"good":""}">${k+1}. ${esc(c)}</li>`).join("")+"</ul>";
+    else{
+      if(a.reason==="number")body+=`<p>${esc(t.num)}${esc(a.sourceNums.join(", "))}</p>`;
+      if(a.reason==="negation")body+=`<p>${esc(t.neg)}</p>`;
     }
-    body+=extra+quote(a.passage);
+    body+=quote(a.passage);
     if(a.support&&a.support.length)body+=`<p class="sub">${esc(t.also)} : ${a.support.map(p=>esc(p.title||p.origin)).join(", ")}</p>`;
-    if(a.conflict&&a.conflict.length){
-      body+=`<div class="warn"><b>${esc(t.contra)}</b>`+a.conflict.map(p=>`<p>${esc(saysLabel(a,p.says))}</p>`+quote(p)).join("")+`</div>`;
-      spoken+=" "+t.contra;
-    }
+    if(a.conflict&&a.conflict.length)body+=`<div class="warn"><b>${esc(t.contra)}</b>`+a.conflict.map(p=>`<p>${esc(saysLabel(a,p.says))}</p>`+quote(p)).join("")+`</div>`;
     if(a.viaAI)body+=`<p class="sub">${esc(AIT[lang()].only)} (${esc(a.viaAI)})</p>`;
     if(a.aiConfirm)body+=`<p class="sub">${esc(AIT[lang()].ok)} (${esc(a.aiConfirm)})</p>`;
     if(a.viaIA)body+=`<p class="sub">${esc(t.ia)} : « ${esc(a.understood)} »</p>`;
     if(a.viaSens)body+=`<p class="sub">${esc(t.sens)}</p>`;
     body+=`<p class="sub">${esc(t.conf)} : ${esc(CONF[lang()][a.conf]||a.conf)}</p>`;
-    if(!(a.conflict&&a.conflict.length))spoken+=" "+a.passage.text.slice(0,300);
+    if(!okV(v,a.kind))return noAnswer(heard,body);
   }
-  res.innerHTML=`<div class="heard">« ${esc(heard)} »</div><div class="verdict ${cls}">${esc(verdict)}</div>${body}`;
-  say(spoken);
+  render(heard,v,body);
 }
 
 function applyLexique(t){
@@ -363,24 +364,33 @@ function applyLexique(t){
   }
   return out;
 }
+let ASKN=0;
 async function ask(heard){
-  heard=heard.trim();
+  heard=String(heard||"").trim();
   if(!heard)return;
+  const my=++ASKN;                       // si une question plus récente arrive (voix puis clavier), l'ancienne réponse est abandonnée
+  try{await ask1(heard,my)}
+  catch(e){if(my===ASKN)noAnswer(heard,`<p class="sub">Errore interno : ${esc(e&&e.message||e)}</p>`)}
+}
+async function ask1(heard,my){
   const res=$("res");res.hidden=false;
   if(IDXP)await IDXP;                      // l'index se construit par petites tranches : on l'attend ici
+  if(my!==ASKN)return;
   const text=applyLexique(heard);
   let variants=[{text}],note="";
   const iaOn=!SAFE&&!!(CFG.ia&&CFG.ia.on&&window.Ia&&Ia.ready());
   const aiAnswers=iaOn&&CFG.ia.answer!==false;     // l'IA répond directement : inutile de lui demander aussi de reformuler (1 appel au lieu de 2)
   if(iaOn&&!aiAnswers){
     const U=await Ia.understand(text,{lang:(KB.meta&&KB.meta.langue)||lang(),subject:(KB.meta&&KB.meta.nom)||""});
+    if(my!==ASKN)return;
     if(U)U.variants.forEach(v=>variants.push({text:v}));
     else note=tr().iaoff+" ("+Ia.last+")";
   }
   if(aiAnswers){
     const mcq=Engine.parseMcq(text);
     const F=await Ia.free(text,mcq,{subject:(KB.meta&&KB.meta.nom)||""});
-    if(F){
+    if(my!==ASKN)return;
+    if(F&&F.v!=="other"){
       let base=null;
       try{if(IDX&&IDX.N){base=Engine.answerMulti(IDX,variants,{strict:!!CFG.strict})}}catch(e){}
       return showFree(heard,F,base);
@@ -388,13 +398,14 @@ async function ask(heard){
     note=tr().iaoff+" ("+Ia.lastFree+")";
   }
   for(const v of variants){const q=best(v.text);if(q)return showQuiz(heard,q)}
-  if(!IDX||!IDX.N){res.innerHTML=`<div class="heard">« ${esc(heard)} »</div><p>${esc(tr().empty)}</p>`;say(tr().empty);return}
+  if(!IDX||!IDX.N)return noAnswer(heard,`<p>${esc(tr().empty)}</p>${note?`<p class="sub">${esc(note)}</p>`:""}`);
   if(CFG.sem&&window.Sem&&Sem.ready()&&Sem.vecs.size){
     for(const v of variants){try{v.sem=await Sem.prepare(IDX,v.text,semT())}catch(e){v.sem=null}}
+    if(my!==ASKN)return;
   }
   let a=Engine.answerMulti(IDX,variants,{strict:!!CFG.strict});
   showKb(heard,a);
-  if(note)res.insertAdjacentHTML("beforeend",`<p class="sub">${esc(note)}</p>`);
+  if(note){const d=$("res").querySelector("details");const h=`<p class="sub">${esc(note)}</p>`;if(d)d.insertAdjacentHTML("beforeend",h);else $("res").insertAdjacentHTML("beforeend",`<details class="det"><summary>Dettagli</summary>${h}</details>`)}
 }
 
 /* ---------- voix ---------- */
@@ -473,7 +484,7 @@ async function convLoop(){
       said+=" "+more.trim();
     }
     if(!CONV)break;
-    if(STOPW.test(said)&&said.split(/\s+/).length<=3){await say(lang()==="it"?"Va bene, mi fermo.":"D'accord, j'arrête.");return stopConv(true)}
+    if(STOPW.test(said)&&said.split(/\s+/).length<=3){return stopConv(true)}
     if(isEcho(said)){setConv("Je t'écoute… (écho ignoré)");await sleep(500);continue}   // l'appli s'était entendue elle-même
     LASTQ=sameTxt(said);LASTQAT=Date.now();
     $("txt").value=said;setConv("Je cherche la réponse…");

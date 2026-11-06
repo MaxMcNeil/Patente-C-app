@@ -102,3 +102,6 @@ La reconnaissance vocale utilise celle de Google sur le téléphone (réseau né
 - Une pause courte au milieu d'une question ne la coupe plus : après chaque morceau, l'appli attend ~2,2 s (jusqu'à 4 morceaux) et fusionne avant de répondre.
 - Si le micro réentend la réponse que l'appli vient de dire (ou la même question juste après), c'est ignoré : plus de boucle. Délai de 1,3 s après la réponse avant de réécouter.
 - Application Android : relancer le workflow « android » pour récupérer cette version.
+
+## Réponses admises (strict)
+L'appli ne dit et n'affiche que **Vero**, **Falso**, ou le numéro du choix (**uno, due, tre, quattro, cinque**) pour un QCM. Rien d'autre : l'explication, la source et les alertes sont dans un volet replié « Dettagli », jamais lu. « stop » arrête l'écoute en silence. Si l'IA hésite (« altro », numéro hors choix, JSON illisible), elle est relancée en mode « choix obligatoire », puis le 2e fournisseur, puis la base (meilleure piste). Si vraiment rien n'est possible : écran « — » + vibration, aucune phrase.

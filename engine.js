@@ -172,20 +172,24 @@
   function parseMcq(raw) {
     const words = String(raw).replace(/\s+/g, " ").trim().split(" ");
     const marks = [];
+    const NW = { uno: 1, due: 2, tre: 3, quattro: 4, cinque: 5 };
     words.forEach((w, i) => {
       const m = w.match(/^\(?([a-dA-D])[).:,\-]*$/);
-      if (m) marks.push({ L: m[1].toLowerCase(), i });
+      if (m) return marks.push({ L: m[1].toLowerCase(), i, k: "l" });
+      const n = w.toLowerCase().replace(/[).:,\-]+$/, "").replace(/^\(/, "");
+      const v = /^[1-5]$/.test(n) ? +n : NW[n];     // réponses numérotées : 1 2 3 (ou uno due tre) = a b c
+      if (v) marks.push({ L: "abcde"[v - 1], i, k: "n" });
     });
     let best = null;
     for (const m0 of marks) {
       if (m0.L !== "a") continue;
       const seq = [m0];
-      for (const L of ["b", "c", "d"]) {
-        const nx = marks.find(m => m.L === L && m.i > seq[seq.length - 1].i + 1);
+      for (const L of ["b", "c", "d", "e"]) {
+        const nx = marks.find(m => m.k === m0.k && m.L === L && m.i > seq[seq.length - 1].i + 1);
         if (!nx) break;
         seq.push(nx);
       }
-      if (seq.length >= 2 && (!best || seq.length > best.length || (seq.length === best.length && seq[0].i > best[0].i))) best = seq;
+      if (seq.length >= (m0.k === "n" ? 3 : 2) && (!best || seq.length > best.length || (seq.length === best.length && seq[0].i > best[0].i))) best = seq;
     }
     if (!best || best[0].i < 3) return null;
     const tail = /\s+(réponse|reponse|risposta|option|opzione|choix|scelta|answer|ou|o|or)$/i;
