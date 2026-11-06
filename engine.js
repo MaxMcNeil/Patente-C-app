@@ -180,17 +180,24 @@
       const v = /^[1-5]$/.test(n) ? +n : NW[n];     // réponses numérotées : 1 2 3 (ou uno due tre) = a b c
       if (v) marks.push({ L: "abcde"[v - 1], i, k: "n" });
     });
-    let best = null;
-    for (const m0 of marks) {
-      if (m0.L !== "a") continue;
-      const seq = [m0];
-      for (const L of ["b", "c", "d", "e"]) {
-        const nx = marks.find(m => m.k === m0.k && m.L === L && m.i > seq[seq.length - 1].i + 1);
-        if (!nx) break;
-        seq.push(nx);
+    /* Les numéros écrits en toutes lettres (« due », « tre »…) peuvent aussi apparaître DANS le texte d'une option
+       (« le due ore »). On essaie donc toutes les suites possibles et on garde la plus longue, puis celle dont
+       l'option la plus courte est la plus longue (une vraie découpe donne des options étoffées). */
+    let best = null, bestScore = null;
+    const letters = ["a", "b", "c", "d", "e"];
+    const tryFrom = (seq, k) => {
+      const lastI = seq[seq.length - 1].i;
+      const need = k === "n" ? 3 : 2;
+      if (seq.length >= need) {
+        let mn = Infinity;
+        for (let q = 0; q < seq.length; q++) mn = Math.min(mn, (q + 1 < seq.length ? seq[q + 1].i : words.length) - seq[q].i - 1);
+        const sc = [seq.length, mn, seq[0].i];
+        if (!bestScore || sc[0] > bestScore[0] || (sc[0] === bestScore[0] && (sc[1] > bestScore[1] || (sc[1] === bestScore[1] && sc[2] > bestScore[2])))) { best = seq.slice(); bestScore = sc; }
       }
-      if (seq.length >= (m0.k === "n" ? 3 : 2) && (!best || seq.length > best.length || (seq.length === best.length && seq[0].i > best[0].i))) best = seq;
-    }
+      if (seq.length >= letters.length) return;
+      for (const nx of marks) if (nx.k === k && nx.L === letters[seq.length] && nx.i > lastI + 1) tryFrom(seq.concat([nx]), k);
+    };
+    for (const m0 of marks) if (m0.L === "a") tryFrom([m0], m0.k);
     if (!best || best[0].i < 3) return null;
     const tail = /\s+(réponse|reponse|risposta|option|opzione|choix|scelta|answer|ou|o|or)$/i;
     const q = words.slice(0, best[0].i).join(" ").replace(tail, "").trim();

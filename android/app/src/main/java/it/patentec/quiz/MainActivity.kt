@@ -6,7 +6,10 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.webkit.JavascriptInterface
@@ -35,6 +38,8 @@ class MainActivity : Activity() {
         w.settings.databaseEnabled = true
         w.settings.mediaPlaybackRequiresUserGesture = false
         w.settings.cacheMode = WebSettings.LOAD_DEFAULT
+        // Page web gardée « importante » même quand l'appli passe en arrière-plan : sinon Android peut la ralentir ou la geler.
+        if (Build.VERSION.SDK_INT >= 26) w.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
         w.addJavascriptInterface(Bridge(applicationContext), "NativeVoice")
         w.webChromeClient = WebChromeClient()
         w.webViewClient = object : WebViewClient() {
@@ -66,6 +71,10 @@ class MainActivity : Activity() {
         } catch (_: Exception) {}
     }
 
+    // En arrière-plan on ne met JAMAIS la page en pause : la boucle d'écoute doit continuer.
+    override fun onStop() { super.onStop(); web?.resumeTimers() }
+    override fun onPause() { super.onPause(); web?.resumeTimers() }
+
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         val w = web
@@ -80,9 +89,12 @@ class MainActivity : Activity() {
 
 /** Pont JavaScript : window.NativeVoice dans l'appli web. */
 class Bridge(private val ctx: Context) {
+    private val mh = Handler(Looper.getMainLooper())
+    /** Attente pilotée par le natif : les minuteries JavaScript sont ralenties quand l'appli est en arrière-plan, pas celle-ci. */
+    @JavascriptInterface fun sleep(ms: Int) { mh.postDelayed({ VoiceService.js("window.__nv&&window.__nv.slept&&window.__nv.slept()") }, ms.toLong()) }
     @JavascriptInterface fun listen(lang: String) { VoiceService.cmd(ctx, "listen", lang, null) }
     @JavascriptInterface fun listenGrace(lang: String, graceMs: Int) { VoiceService.cmd(ctx, "listen", lang, graceMs.toString()) }
     @JavascriptInterface fun speak(text: String, lang: String) { VoiceService.cmd(ctx, "speak", lang, text) }
     @JavascriptInterface fun stop() { VoiceService.cmd(ctx, "stop", null, null) }
-    @JavascriptInterface fun version(): String = "1"
+    @JavascriptInterface fun version(): String = "2"
 }

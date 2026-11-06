@@ -105,3 +105,8 @@ La reconnaissance vocale utilise celle de Google sur le téléphone (réseau né
 
 ## Réponses admises (strict)
 L'appli ne dit et n'affiche que **Vero**, **Falso**, ou le numéro du choix (**uno, due, tre, quattro, cinque**) pour un QCM. Rien d'autre : l'explication, la source et les alertes sont dans un volet replié « Dettagli », jamais lu. « stop » arrête l'écoute en silence. Si l'IA hésite (« altro », numéro hors choix, JSON illisible), elle est relancée en mode « choix obligatoire », puis le 2e fournisseur, puis la base (meilleure piste). Si vraiment rien n'est possible : écran « — » + vibration, aucune phrase.
+
+## Arrière-plan et QCM longs (APK v2)
+- L'APK garde la page web « importante » même quand tu ouvres une autre appli, ne la met jamais en pause, et pilote les attentes de la boucle par le natif (les minuteries JavaScript sont ralenties en arrière-plan). Pour que ça tienne : accepte l'exemption batterie demandée au premier lancement.
+- QCM dictés avec des options très longues : la découpe essaie toutes les suites possibles (un « due » ou « tre » dans le texte d'une option ne la casse plus) ; l'écoute accepte jusqu'à 90 s d'affilée et fusionne jusqu'à 10 morceaux séparés par des pauses.
+- En cas de sources qui se contredisent (ou mode strict + source non vérifiée), l'appli ne devine pas : écran « — », rien n'est dit, le téléphone vibre.
